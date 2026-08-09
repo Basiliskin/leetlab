@@ -66,6 +66,17 @@ function mkLog(lvl: string) {
     }
   }
 }
+// Surface a sandbox error to the browser console and the UI console tab.
+function reportError(prefix: string, err: unknown) {
+  const info = errInfo(err)
+  const line = `${prefix}: ${info.name}: ${info.message}`
+  LOG.push({ l: 'error', t: line })
+  try {
+    postMessage({ type: 'console', level: 'error', args: [line] })
+  } catch {
+    /* noop */
+  }
+}
 const cns = {
   log: mkLog('log'),
   info: mkLog('info'),
@@ -98,6 +109,7 @@ self.onmessage = async function (ev: MessageEvent) {
     )
     entry = factory(cns, moduleObj, moduleObj.exports, req, proc)
   } catch (e) {
+    reportError('Compile error', e)
     postMessage({ type: 'compile', error: errInfo(e), logs: drain() })
     return
   }
@@ -107,6 +119,7 @@ self.onmessage = async function (ev: MessageEvent) {
 
 async function runFn(fn: Function, m: any) {
   if (typeof fn !== 'function') {
+    reportError('Compile error', new ReferenceError(`No callable "${m.name}" found.`))
     postMessage({
       type: 'compile',
       error: {
@@ -138,6 +151,7 @@ async function runFn(fn: Function, m: any) {
         logs: drain(),
       })
     } catch (e) {
+      reportError(`Case ${i + 1}`, e)
       postMessage({
         type: 'case',
         i,
@@ -155,6 +169,7 @@ async function runFn(fn: Function, m: any) {
 
 async function runClass(Cls: unknown, m: any) {
   if (typeof Cls !== 'function') {
+    reportError('Compile error', new ReferenceError(`No class "${m.name}" found.`))
     postMessage({
       type: 'compile',
       error: {
@@ -211,6 +226,7 @@ async function runClass(Cls: unknown, m: any) {
     const ms = performance.now() - t0
 
     if (err) {
+      reportError(`Case ${i + 1}`, err)
       postMessage({
         type: 'case',
         i,

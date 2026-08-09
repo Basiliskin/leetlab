@@ -1,3 +1,5 @@
+import { stripTypes } from "./stripTypes"
+
 export class TypeScriptCompiler {
   ready = false
 
@@ -33,16 +35,7 @@ export class TypeScriptCompiler {
         throw new Error(`TS Error: ${e.message}`)
       }
     }
-    return this.stripTypes(src)
-  }
-
-  stripTypes(src: string) {
-    return src
-      .replace(/^\s*(?:export\s+)?interface\s+[^\n{]*\{[\s\S]*?\n\}/gm, '')
-      .replace(/^\s*(?:export\s+)?type\s+[^\n=]+=[^\n;]+;\s*$/gm, '')
-      .replace(/\b(?:public|private|protected|readonly|declare|override|implements)\s+/g, '')
-      .replace(/(\))\s*:\s*[A-Za-z_$][\w$<>&| ,.]*(?=\s*\{)/g, '$1')
-      .replace(/\bas\s+[A-Za-z_$][\w$<>& .]*/g, '')
+    return stripTypes(src)
   }
 }
 

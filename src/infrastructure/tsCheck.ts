@@ -1,0 +1,141 @@
+// Semantic (type) checking for the TS editor. Uses the TypeScript compiler
+// that tsCompiler already loads from the CDN at runtime; lib.d.ts files are
+// fetched lazily from jsDelivr and cached, mirroring that same approach.
+// Falls back to nothing useful offline - callers degrade to parser-based lint.
+
+const LIB_BASE = "https://cdn.jsdelivr.net/npm/typescript@5.4.5/lib/"
+
+// Reference directives look like `lib="es2021.intl"` but map to the file
+// `lib.es2021.intl.d.ts`; seeds may already carry the full `lib.*.d.ts` name.
+const libFetch = new Map<string, Promise<string>>()
+const libTexts = new Map<string, string>()
+
+function fetchLib(full: string): Promise<string> {
+  let p = libFetch.get(full)
+  if (!p) {
+    p = fetch(LIB_BASE + full).then((r) => {
+      if (!r.ok) throw new Error(`lib ${full}: HTTP ${r.status}`)
+      return r.text()
+    })
+    libFetch.set(full, p)
+  }
+  return p
+}
+
+// Resolve the transitive `/// <reference lib="..." />` closure of the
+// requested libs so getScriptSnapshot can serve them synchronously. Text is
+// cached under the full file name (`lib.es2020.d.ts`), which is what the
+// compiler's host queries use.
+async function ensureLibs(seed: string[]): Promise<void> {
+  const stack = [...seed]
+  while (stack.length) {
+    const full = stack.pop()!
+    if (libTexts.has(full)) continue
+    const text = await fetchLib(full)
+    libTexts.set(full, text)
+    for (const m of text.matchAll(/\/\/\/\s*<reference\s+lib="([^"]+)"\s*\/>/g)) {
+      const child = `lib.${m[1]}.d.ts`
+      if (!libTexts.has(child)) stack.push(child)
+    }
+  }
+}
+
+// The host receives lib names in several shapes: `/lib.es2020.d.ts`,
+// `/node_modules/@typescript/lib-es2020.d.ts`. Normalize to the cache key.
+function normLibName(name: string): string | undefined {
+  if (!name.endsWith(".d.ts")) return undefined
+  const base = name.split("/").pop()!
+  if (base.startsWith("lib-")) return "lib." + base.slice(4)
+  return base
+}
+
+export interface TsDiag {
+  from: number
+  to: number
+  severity: "error" | "warning"
+  message: string
+}
+
+let service: any = null
+let version = 0
+let currentCode = ""
+let chain: Promise<TsDiag[]> = Promise.resolve([])
+
+function makeHost(ts: any) {
+  return {
+    getCompilationSettings: () => ({
+      strict: true,
+      target: ts.ScriptTarget.ES2021,
+      lib: ["lib.es2021.d.ts", "lib.dom.d.ts"],
+      module: ts.ModuleKind.ESNext,
+      noEmit: true,
+      skipLibCheck: true,
+    }),
+    getScriptFileNames: () => ["input.ts"],
+    getScriptVersion: () => String(version),
+    getScriptSnapshot: (name: string) => {
+      if (name === "input.ts") return ts.ScriptSnapshot.fromString(currentCode)
+      const n = normLibName(name)
+      const text = n === undefined ? undefined : libTexts.get(n)
+      return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text)
+    },
+    getCurrentDirectory: () => "/",
+    getDirectories: () => [],
+    directoryExists: () => true,
+    fileExists: (name: string) => {
+      if (name === "input.ts") return true
+      const n = normLibName(name)
+      return n !== undefined && libTexts.has(n)
+    },
+    readFile: (name: string) => {
+      if (name === "input.ts") return currentCode
+      const n = normLibName(name)
+      return n === undefined ? undefined : libTexts.get(n)
+    },
+    getDefaultLibFileName: () => "lib.es2021.d.ts",
+    getNewLine: () => "\n",
+  }
+}
+
+function lineStartsOf(text: string): number[] {
+  const starts = [0]
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1)
+  return starts
+}
+
+export function checkCode(code: string, ts: any): Promise<TsDiag[]> {
+  const run = async (): Promise<TsDiag[]> => {
+    version++
+    currentCode = code
+    await ensureLibs(["lib.es2021.d.ts", "lib.dom.d.ts"])
+    if (!service) service = ts.createLanguageService(makeHost(ts))
+    const starts = lineStartsOf(code)
+    const toOffset = (pos: { line: number; character: number }) => {
+      const lineStart = starts[pos.line] ?? code.length
+      return Math.min(code.length, lineStart + pos.character)
+    }
+    const all = [
+      ...service.getSyntacticDiagnostics("input.ts"),
+      ...service.getSemanticDiagnostics("input.ts"),
+    ]
+    const out: TsDiag[] = []
+    for (const d of all) {
+      if (d.start === undefined || d.length === 0) continue
+      const from =
+        typeof d.start === "number"
+          ? Math.min(code.length, d.start)
+          : toOffset(d.start)
+      const to = Math.min(code.length, from + d.length)
+      if (from >= to) continue
+      out.push({
+        from,
+        to,
+        severity: d.category === ts.DiagnosticCategory.Error ? "error" : "warning",
+        message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+      })
+    }
+    return out
+  }
+  chain = chain.then(run, run)
+  return chain
+}

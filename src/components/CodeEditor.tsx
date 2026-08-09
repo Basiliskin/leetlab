@@ -19,6 +19,7 @@ import {
   toggleComment,
 } from "@codemirror/commands";
 import { useAppStore } from "../infrastructure/store";
+import { checkCode } from "../infrastructure/tsCheck";
 
 // Marks transactions dispatched by the editor itself (programmatic doc
 // replacement, language reconfiguration) so the update listener can tell
@@ -89,7 +90,7 @@ const syntaxStyle = HighlightStyle.define([
 
 // Flag Lezer parse-error nodes ("⚠") as lint diagnostics. Error nodes are
 // skipped during traversal so nested errors only report the outermost span.
-const syntaxLint = linter((view) => {
+function syntaxDiag(view: EditorView): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   syntaxTree(view.state).iterate({
     enter(node) {
@@ -111,7 +112,39 @@ const syntaxLint = linter((view) => {
     },
   });
   return diagnostics;
-});
+}
+
+const syntaxLint = linter((view) => syntaxDiag(view), { delay: 300 });
+
+// TS mode: semantic + syntactic diagnostics from the runtime-loaded TS
+// compiler. Degrades to parser-based errors while the compiler/libs load or
+// if the CDN is unreachable.
+const tsLint = linter(
+  async (view) => {
+    const ts = (window as any).ts;
+    if (ts && typeof ts.createLanguageService === "function") {
+      try {
+        const code = view.state.doc.toString();
+        const diags = await checkCode(code, ts);
+        if (view.state.doc.toString() !== code) return []; // stale - doc changed mid-check
+        // The doc may have been replaced while the async check was in
+        // flight; drop stale out-of-range diagnostics so the lint renderer
+        // never sees positions beyond the current document.
+        const len = view.state.doc.length;
+        return diags.filter((d) => d.from >= 0 && d.to <= len);
+      } catch {
+        return syntaxDiag(view);
+      }
+    }
+    return syntaxDiag(view);
+  },
+  {
+    delay: 400,
+    // Re-check on selection changes too, so the no-op dispatch after the TS
+    // compiler loads triggers a fresh type check without any edit.
+    needsRefresh: (update) => update.selectionSet,
+  }
+);
 
 function extensionsFor(lang: "js" | "ts") {
   const language = javascript(lang === "ts" ? { typescript: true } : undefined);
@@ -148,7 +181,7 @@ function extensionsFor(lang: "js" | "ts") {
     editorTheme,
     syntaxHighlighting(syntaxStyle),
     lintGutter(),
-    syntaxLint,
+    lang === "ts" ? tsLint : syntaxLint,
   ];
 }
 
@@ -161,6 +194,23 @@ export function CodeEditor() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langRef = useRef(lang);
+  const tsStatus = useAppStore((s) => s.tsStatus);
+  const lastTsRef = useRef(tsStatus);
+
+  // The linter only re-runs on editor transactions, so once the CDN TypeScript
+  // compiler finishes loading (async, after the editor mounted) force a no-op
+  // selection dispatch to trigger a fresh type check.
+  useEffect(() => {
+    if (lastTsRef.current === tsStatus) return;
+    lastTsRef.current = tsStatus;
+    const view = viewRef.current;
+    if (view && tsStatus) {
+      view.dispatch({
+        selection: { anchor: view.state.selection.main.head },
+        annotations: external.of(true),
+      });
+    }
+  }, [tsStatus]);
 
   const problem = getProblem(currentSlug);
   const state = getProblemState(currentSlug);

@@ -128,7 +128,10 @@ export function Drawer() {
                   const parsed = cases[idx] || {};
                   const mark = caseMarks[parsed.id] || "";
                   return (
-                    <div key={idx} className={`rrow ${mark}`}>
+                    <div
+                      key={idx}
+                      className={`rrow ${mark} ${!m || !m.ok ? "open" : ""}`}
+                    >
                       <div className="rrow-h">
                         <span className="ic">
                           {mark === "pass"
