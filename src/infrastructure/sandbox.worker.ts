@@ -69,7 +69,7 @@ const cns = {
   debug: mkLog('debug'),
 }
 
-self.onmessage = function (ev: MessageEvent) {
+self.onmessage = async function (ev: MessageEvent) {
   const m = ev.data
   const moduleObj: { exports: any } = { exports: {} }
   const req = () => {
@@ -96,11 +96,11 @@ self.onmessage = function (ev: MessageEvent) {
     postMessage({ type: 'compile', error: errInfo(e), logs: drain() })
     return
   }
-  if (m.mode === 'class') runClass(entry, m)
-  else runFn(entry, m)
+  if (m.mode === 'class') await runClass(entry, m)
+  else await runFn(entry, m)
 }
 
-function runFn(fn: Function, m: any) {
+async function runFn(fn: Function, m: any) {
   if (typeof fn !== 'function') {
     postMessage({
       type: 'compile',
@@ -117,7 +117,9 @@ function runFn(fn: Function, m: any) {
     const c = m.cases[i]
     const t0 = performance.now()
     try {
-      const out = fn.apply(null, c.input)
+      const raw = fn.apply(null, c.input)
+      const out =
+        raw && typeof (raw as any).then === 'function' ? await raw : raw
       const ms = performance.now() - t0
       const hasExp = Object.prototype.hasOwnProperty.call(c, 'expected')
       postMessage({
@@ -146,7 +148,7 @@ function runFn(fn: Function, m: any) {
   postMessage({ type: 'done' })
 }
 
-function runClass(Cls: unknown, m: any) {
+async function runClass(Cls: unknown, m: any) {
   if (typeof Cls !== 'function') {
     postMessage({
       type: 'compile',
@@ -189,7 +191,9 @@ function runClass(Cls: unknown, m: any) {
             )
           }
 
-          const ret = method.apply(inst, args)
+          const raw = method.apply(inst, args)
+          const ret =
+            raw && typeof (raw as any).then === 'function' ? await raw : raw
 
           // Normalize undefined -> null for LeetCode-style comparison
           results.push(ret === undefined ? null : ret)

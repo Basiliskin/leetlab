@@ -1,0 +1,641 @@
+{
+    "task": "Extend LeetLab's problem bank beyond its current 6 algorithm problems to add three new topic areas: Promises, Generator Functions, and React-themed logic.",
+    "analysis": {
+        "objective": "Add three new topic areas to LeetLab's problem bank (Promises, Generator Functions, React-themed logic) with 3-5 production-quality problems each, matching the polish of the existing 6 problems, after investigating whether the execution sandbox needs new capability for async/generator support.",
+        "successDefinition": "src/infrastructure/problemBank.ts gains 9-15 new Problem entries (3-5 each for Promises, Generator Functions, React-themed logic), each conforming to the existing Problem interface in src/domain/Problem.ts with: JS+TS starter code, a mix of visible and hidden ProblemTest entries, non-empty hints array, and a LeetCode-style HTML desc string. All new problems execute correctly end-to-end through the existing useRunCode/sandbox.worker/tsCompiler pipeline (or a deliberately extended version of it) as verified by actually running them, not just by code review. Before writing any Promises/Generator problem, the sandbox's real async/Promise/generator support is inspected in useRunCode.ts, sandbox.worker.ts, and tsCompiler.ts, and a written conclusion (support exists / needs extension) precedes and justifies the implementation approach taken. React-themed problems are pure JS/TS logic problems (e.g., simplified useState/useEffect/memoize implementations) runnable in the existing fn/class mode with no DOM, no JSX, and no component-rendering assertions. The app builds/type-checks and any existing test runner passes with the new content included.",
+        "assumptions": [
+            "The existing 6 problems in problemBank.ts are the quality bar/template to imitate for structure, tone, and difficulty spread (Easy/Medium/Hard mix), not just a schema to satisfy",
+            "'Multiple problems (3-5)' per topic means each of the three topics independently gets 3 to 5 problems, not 3-5 total across all three",
+            "No new fields are needed on the Problem/ProblemTest domain types unless investigation proves the sandbox genuinely cannot express async/generator problems within the current shape (fn/class mode, in/out or calls/out tests)",
+            "'Production quality matching existing polish' includes hidden tests that actually distinguish correct from naive/incorrect solutions, not just restatements of the visible examples",
+            "Tags/slugs/numbering follow whatever convention the existing 6 entries already use (inspected, not invented)",
+            "No UI changes are needed beyond the data addition, since the app already renders whatever is in the problem bank generically"
+        ],
+        "risks": [
+            "The sandbox may have no real Promise/microtask support (e.g., a synchronous-only worker eval with no event loop drain before collecting results), which would silently produce wrong/hanging results for async problems if not caught by investigation first",
+            "Generator function syntax (function*, yield) may not survive the TS-to-JS compilation step (tsCompiler.ts) or the worker's execution/serialization boundary, producing false failures unrelated to problem correctness",
+            "If sandbox extension is required, scope could silently balloon from 'add problems' into 'rework the execution engine,' threatening the 3-5-per-topic production-quality bar within reasonable effort",
+            "Async tests need a way to signal completion (awaited result vs. timeout) inside a worker sandbox that was possibly designed for synchronous fn calls only; wrong timeout/teardown handling could cause hidden test flakiness",
+            "React-themed problems risk scope creep toward real hook semantics (batching, dependency-array edge cases, effect cleanup ordering) that are legitimately ambiguous without a real React runtime, risking either an oversimplified or a misleading problem statement",
+            "No caller-supplied acceptance criteria were given, so 'production quality' and 'matching polish' are judged subjectively against the existing 6 problems; there is no automated rubric to check hint quality, HTML description fidelity, or difficulty calibration"
+        ],
+        "outOfScope": [
+            "Real React component rendering, JSX, or DOM assertions \u2014 explicitly excluded by the user; React problems stay in the existing fn/class execution model",
+            "Building a React-capable rendering sandbox or adding a DOM/jsdom environment \u2014 not needed since React problems are logic-only",
+            "Rewriting or generalizing the sandbox's execution model beyond what's minimally needed to support async/generator problems, if investigation shows a gap",
+            "Adding new topic areas beyond Promises, Generator Functions, and React (e.g., no additional categories even if the bank 'feels thin' elsewhere)",
+            "UI/UX changes to how problems are displayed, filtered, or navigated \u2014 this task is data/content plus possibly sandbox capability, not front-end feature work",
+            "Changing the Problem/TestCase domain schema speculatively \u2014 only touched if investigation proves the current shape cannot express the new problem types",
+            "Editing or re-polishing the existing 6 problems \u2014 the task is additive, not a revision of prior content",
+            "Backend/persistence changes (e.g., a real database or API for problems) \u2014 problemBank.ts remains the static source of truth as it is today"
+        ],
+        "domainShape": "technical",
+        "domainShapeReason": "The task is about extending a static content bank and possibly an execution/compilation sandbox with new problem types \u2014 it manipulates code-execution machinery (worker sandbox, TS compiler, test runner) and content data, not business entities like orders or accounts that a non-technical domain expert would recognize.",
+        "ubiquitousLanguage": [
+            {
+                "term": "Problem",
+                "meaning": "One practice item in the bank: slug, num, title, difficulty, tags, fnName, mode, starter, tests, hints, desc."
+            },
+            {
+                "term": "ProblemTest",
+                "meaning": "One test case for a Problem: {in,out} for fn mode or {calls,out} for class mode."
+            },
+            {
+                "term": "starter (js/ts)",
+                "meaning": "The unimplemented stub code shown to the solver, in both JS and TS."
+            },
+            {
+                "term": "sandbox worker",
+                "meaning": "sandbox.worker.ts \u2014 the Worker that compiles and executes submitted code against ProblemTests."
+            },
+            {
+                "term": "hidden/visible test",
+                "meaning": "Whether a ProblemTest's input/output is shown to the solver (visible) or only used for grading (hidden)."
+            },
+            {
+                "term": "fn/class mode",
+                "meaning": "Whether a Problem's entry point is a plain function (fn) or a class with methods (class)."
+            },
+            {
+                "term": "hint",
+                "meaning": "A progressively-revealing string nudging the solver toward the approach without giving the answer."
+            },
+            {
+                "term": "tsCompiler",
+                "meaning": "tsCompiler.ts \u2014 compiles TS starter/solution code to JS before it runs in the sandbox worker."
+            }
+        ]
+    },
+    "discoveryFindings": [
+        {
+            "area": "async/await execution support",
+            "finding": "sandbox.worker.ts's runFn calls `const out = fn.apply(null, c.input)` and immediately does `deepEq(out, c.expected)` / `safeOut(out)` synchronously \u2014 there is no `await`, no `.then()`, and no async branch in onmessage. If the submitted fn is `async function` or returns a Promise, `out` will be a Promise instance, not the resolved value; deepEq will compare a Promise object against the expected value (typeof mismatch or empty-keys object) and fail almost every case.",
+            "filePath": "src/infrastructure/sandbox.worker.ts",
+            "implication": "Async/await execution is NOT currently supported end-to-end. runFn/runClass must be extended to detect a thenable return value and await it before comparing/posting. This requires a small, real code change to sandbox.worker.ts before Promise problems can be judged correctly, not just new problemBank entries."
+        },
+        {
+            "area": "generator function execution support",
+            "finding": "There is no special-casing for generator functions in the worker. Calling `fn.apply(null, args)` on a generator function returns a Generator object (not plain data); safeOut/deepEq cannot compare it meaningfully.",
+            "filePath": "src/infrastructure/sandbox.worker.ts",
+            "implication": "Generator syntax itself is fine, but problems must be authored so the fn under test is a plain function that consumes an internal generator and returns ordinary JSON-serializable data, rather than exposing the generator object as the tested return value. This is a problem-authoring constraint, not a code change."
+        },
+        {
+            "area": "TS compilation of async/generator syntax",
+            "finding": "tsCompiler.ts targets ES2021 via ts.transpileModule (natively supports async/await, function*/yield) and its regex-based fallback also passes these keywords through unchanged.",
+            "filePath": "src/infrastructure/tsCompiler.ts",
+            "implication": "Compilation is not the blocker for async/generator syntax in either code path. The only real gap is at the execution/result-comparison layer in sandbox.worker.ts."
+        },
+        {
+            "area": "worker code execution mechanism",
+            "finding": "The worker wraps compiled code in `new Function(...)`; Promise is a native Worker-global so async/await/.then() work fine as language features. The only problem is the harness not awaiting the result.",
+            "filePath": "src/infrastructure/sandbox.worker.ts",
+            "implication": "No environment-level Promise/microtask support gap exists. The fix needed is purely 'await the returned value before comparing' in both runFn and runClass."
+        },
+        {
+            "area": "fn vs class mode test execution",
+            "finding": "'fn' mode calls the exported function once per test case and diffs the return value. 'class' mode instantiates via `new Ctor(...)` then applies `[methodName,args]` pairs in order, collecting results into an array diffed against `c.expected`. No DOM/React runtime is available in the worker (bare Worker global with console/module/exports/require/process shims only).",
+            "filePath": "src/infrastructure/sandbox.worker.ts",
+            "implication": "Generator-based problems fit 'fn' mode naturally. React problems must be algorithmic simulations of React concepts in plain JS/TS, not actual React code, since no React import mechanism exists in the worker."
+        },
+        {
+            "area": "timeout/result collection in useRunCode",
+            "finding": "useRunCode.ts sets a hardcoded 6000ms total timeout per run (all cases combined), not per-case; on timeout the worker is terminated and unresolved cases are marked {tle:true, pass:null}.",
+            "filePath": "src/hooks/useRunCode.ts",
+            "implication": "New async problems should avoid needing real wall-clock delays (resolve via microtasks) to stay within the existing 6000ms budget; extending the timeout is out of scope."
+        },
+        {
+            "area": "Problem domain type shape",
+            "finding": "Problem.ts defines exactly slug, num, title, difficulty, tags, fnName, mode, starter{js,ts}, tests[], hints[], desc. No fields exist for 'async', 'expectedType', or generator-specific metadata.",
+            "filePath": "src/domain/Problem.ts",
+            "implication": "New problems must fit entirely within this existing shape \u2014 mode stays 'fn'/'class', tests stay plain JSON-serializable {in,out}/{calls,out} pairs. No domain-type extension needed."
+        },
+        {
+            "area": "existing problemBank conventions: numbering/slug/tags/difficulty",
+            "finding": "All 6 current entries mirror real LeetCode numbers/slugs. Tags are free-form Title Case (Array, Hash Table, String, Sliding Window, Stack, Two Pointers, Dynamic Programming, Monotonic Stack, Sorting, Design). Difficulty spread is Easy:2, Medium:3, Hard:1. `slug` is the real Zustand-store lookup key (must be unique); `num` is a cosmetic display badge only, not used for lookups.",
+            "filePath": "src/infrastructure/problemBank.ts",
+            "implication": "New problems are not real LeetCode problems, so pick a non-colliding numbering scheme (continue ascending past 155) and unique slugs. Introduce thematic tags (Promises, Async, Generators, Iterators, React) following the existing Title Case style, 2-4 per problem, and keep the overall difficulty spread skewed Easy/Medium as in the existing bank."
+        }
+    ],
+    "requiredMaterials": [],
+    "phases": [
+        {
+            "id": "sandbox-promise-handling-fix",
+            "order": 0,
+            "name": "Fix sandbox worker Promise handling",
+            "goal": "Modify runFn/runClass in sandbox.worker.ts so that Promise-returning results from user code are awaited (resolved) before the deepEq comparison against expected ProblemTest output, so genuine Promise-behavior problems can be judged correctly.",
+            "boundedContext": "sandbox worker execution model",
+            "layer": "infrastructure",
+            "blastRadius": "small",
+            "inputs": [
+                "current runFn/runClass implementation in sandbox.worker.ts",
+                "useRunCode.ts's fixed 6000ms total run timeout (must not be extended)"
+            ],
+            "expectedResult": "runFn and runClass await any Promise returned by the tested function/method before running deepEq against ProblemTest.out, with no other change to the execution model; existing 6 problems (none of which return Promises) grade identically to before.",
+            "dependsOn": [],
+            "compensation": "Revert the sandbox.worker.ts diff if grading of any of the existing 6 problems regresses.",
+            "rubric": [
+                {
+                    "id": "promise-result-awaited-before-compare",
+                    "label": "Promise-returning results are resolved before comparison",
+                    "ruleStatement": "When the value returned by the tested function (runFn) or a method call (runClass) is a thenable/Promise, the worker must await it and use the resolved value for both `output` (safeOut) and the `deepEq` comparison against `c.expected` \u2014 never compare the pending Promise object itself.",
+                    "passCriteria": [
+                        "runFn's per-case block awaits `out` when Promise-like before calling safeOut/deepEq",
+                        "runClass's per-call loop awaits each method's return value when Promise-like, before pushing into `results` and before the final deepEq",
+                        "A manually-added test problem whose solution returns `Promise.resolve(expected)` reports pass:true and output equal to the resolved value"
+                    ],
+                    "failureExamples": [
+                        "case output field shows a serialized empty object / '[object Promise]' instead of the resolved value",
+                        "a correct Promise-returning solution is graded pass:false because deepEq compared a Promise object to the expected value",
+                        "only runFn is patched to await, runClass's method-call loop still pushes the raw unresolved Promise into results"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "rejected-promise-becomes-failing-case",
+                    "label": "Promise rejection is caught and reported as a normal failing case",
+                    "ruleStatement": "A rejected Promise returned by user code must be caught in the same try/catch path used for synchronous throws, producing a case message with ok:false/pass:false, not an uncaught rejection that escapes to worker.onerror or kills the run.",
+                    "passCriteria": [
+                        "A test problem whose solution does `return Promise.reject(new Error('x'))` yields a case message with ok:false, pass:false, populated error info",
+                        "The run still proceeds to emit type:'done' after a rejected case",
+                        "No sandbox_error / worker.onerror path is triggered by a normal user-code rejection"
+                    ],
+                    "failureExamples": [
+                        "worker.onerror fires and the whole run is rejected as 'sandbox_error' because the await wasn't wrapped in the existing try/catch",
+                        "remaining cases after the rejecting one are never sent because the loop stopped"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "existing-sync-problems-unchanged",
+                    "label": "Sync (non-Promise) grading is unchanged",
+                    "ruleStatement": "For all 6 pre-existing problems, running the same reference solutions before and after this change produces identical pass/output sequences \u2014 the fix must be additive, not alter the synchronous code path.",
+                    "passCriteria": [
+                        "Re-running the 6 existing problems' reference solutions against their tests yields the same pass/fail pattern as pre-change",
+                        "Diff of sandbox.worker.ts shows the added Promise-detection branch does not restructure the existing synchronous try/catch or deepEq paths",
+                        "Per-case ms measurement window is unchanged for sync cases"
+                    ],
+                    "failureExamples": [
+                        "a previously-passing sync problem now fails because the case loop lost sequential execution guarantees or exception isolation",
+                        "awaiting a non-thenable value silently changes output serialization or error stack capture for sync throws"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "case-message-order-preserved",
+                    "label": "Case messages remain strictly ordered and single-done",
+                    "ruleStatement": "Even with an async gap from awaiting a Promise, postMessage for cases must still be emitted in index order 0..N-1 with exactly one 'done' message at the end \u2014 no interleaving, duplication, or premature done.",
+                    "passCriteria": [
+                        "The case loop uses sequential await per case (not Promise.all/fire-and-forget)",
+                        "postMessage({type:'done'}) is only reached after the loop (including awaited cases) fully completes",
+                        "A run mixing Promise-returning and sync cases yields cases in original index order"
+                    ],
+                    "failureExamples": [
+                        "cases are dispatched with .then() callbacks without awaiting, causing 'done' to post while a later case is still pending",
+                        "two Promise cases resolve out of order and their case messages arrive after 'done' was already sent"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "run-timeout-untouched",
+                    "label": "6000ms total run timeout in useRunCode.ts is untouched",
+                    "ruleStatement": "The fix lives entirely inside sandbox.worker.ts; the fixed 6000ms setTimeout/worker-termination logic in useRunCode.ts must be unchanged, per the phase's explicit input constraint.",
+                    "passCriteria": [
+                        "git diff for useRunCode.ts shows no hunks",
+                        "No new per-case or per-Promise timeout/race is introduced inside sandbox.worker.ts as a workaround",
+                        "A deliberately never-resolving Promise case still causes the existing 6000ms external timeout path to fire and terminate the worker"
+                    ],
+                    "failureExamples": [
+                        "useRunCode.ts is edited to add a longer or per-case timeout to accommodate async grading",
+                        "sandbox.worker.ts adds its own internal timeout wrapper, creating two competing timeout mechanisms"
+                    ],
+                    "minScore": 8
+                }
+            ],
+            "healerHint": "Most likely failure is in runClass: the fix awaits runFn's final return but the per-call loop for method invocations is left un-awaited, so Promise-returning class methods still push raw Promise objects into results \u2014 fix by awaiting the return value inside that same for-loop before the undefined->null normalization."
+        },
+        {
+            "id": "promises-problem-authoring",
+            "order": 1,
+            "name": "Author Promises topic problems",
+            "goal": "Add 3-5 new Problems for the Promises topic to the problem bank, each with JS+TS starter, visible+hidden ProblemTests, hints, and HTML description, matching the existing 6 problems' polish.",
+            "boundedContext": "Problem bank \u2013 Promises topic",
+            "layer": "interface",
+            "blastRadius": "medium",
+            "inputs": [
+                "fixed Promise-awaiting behavior from sandbox-promise-handling-fix",
+                "existing 6 problems' slug/tag/difficulty/mode conventions (unique slugs vs two-sum, longest-substring, valid-parentheses, trapping-rain-water, merge-intervals, min-stack)"
+            ],
+            "expectedResult": "3-5 new Problem entries tagged for the Promises topic, each in fn or class mode with JSON-serializable {in,out} or {calls,out} tests that resolve via microtasks (no real wall-clock delays, fitting the 6000ms run budget), unique slugs, ascending cosmetic num past 155, Title Case tags, Easy/Medium-skewed difficulty, complete JS+TS starters, hints, and HTML description.",
+            "dependsOn": [
+                "sandbox-promise-handling-fix"
+            ],
+            "rubric": [
+                {
+                    "id": "schema-identity-integrity",
+                    "label": "Schema & identity integrity",
+                    "ruleStatement": "Every new Problem record is structurally complete and does not collide with or mutate existing problem bank entries.",
+                    "passCriteria": [
+                        "3-5 new Problem entries exist, all tagged for the Promises topic",
+                        "Each slug is unique against the existing 6 slugs and against each other",
+                        "Cosmetic num fields are ascending and strictly greater than 155, no gaps reused",
+                        "Tags use Title Case matching the existing tag vocabulary style",
+                        "None of the 6 pre-existing Problem records were modified"
+                    ],
+                    "failureExamples": [
+                        "A new problem reuses slug 'min-stack-2' derived by mutating an existing record",
+                        "num values are 156, 156, 158 (duplicate) or 140 (below floor)",
+                        "Tag written as 'promises' instead of 'Promises'"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "deterministic-sandbox-execution",
+                    "label": "Deterministic, budget-safe sandbox execution",
+                    "ruleStatement": "Every ProblemTest for every new problem resolves deterministically through the fixed Promise-awaiting sandbox path within the run budget, with no reliance on wall-clock time.",
+                    "passCriteria": [
+                        "Reference solutions resolve via microtask scheduling only (Promise.resolve/then/async-await) \u2014 no setTimeout-based real delays",
+                        "Running the full test suite twice in a row produces identical pass/fail results and output values",
+                        "Total execution time per problem stays comfortably under the 6000ms budget",
+                        "No test depends on Date.now(), Math.random(), or external I/O"
+                    ],
+                    "failureExamples": [
+                        "A hidden test uses setTimeout(2000) pushing runtime close to the 6000ms ceiling",
+                        "Re-running the same test twice yields a different resolution order",
+                        "Expected output embeds a timestamp computed at authoring time"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "test-coverage-quality",
+                    "label": "Visible/hidden test coverage quality",
+                    "ruleStatement": "Each problem's ProblemTests exercise both the happy path and Promise-specific edge cases, split correctly between visible and hidden.",
+                    "passCriteria": [
+                        "Each problem has at least 1 visible test and at least 2 hidden tests",
+                        "Test set covers at minimum: a resolve case, a reject/error case where applicable, and an ordering/timing edge case",
+                        "All test inputs/outputs are JSON-serializable",
+                        "Hidden tests are not trivial restatements of the visible test"
+                    ],
+                    "failureExamples": [
+                        "A problem has only 1 test total, marked visible",
+                        "All 3 tests use the same happy-path input with only numbers changed",
+                        "A test's out field is a raw Promise object or function reference"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "starter-and-mode-completeness",
+                    "label": "JS/TS starter and mode completeness",
+                    "ruleStatement": "Every new problem ships complete, consistent JS and TS starters in a single declared fn/class mode that compiles under tsCompiler.",
+                    "passCriteria": [
+                        "Each problem has both a JS starter and a TS starter, non-empty",
+                        "The declared mode is consistent between JS starter, TS starter, and the ProblemTests' call shape",
+                        "TS starter passes tsCompiler with no type errors as authored",
+                        "Function/class signatures in JS and TS starters match (same name, arity)"
+                    ],
+                    "failureExamples": [
+                        "TS starter defines a class-mode signature while tests call it as a plain function",
+                        "TS starter fails to compile due to a missing return type or unresolved import",
+                        "JS starter function name differs from the TS starter's"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "content-polish-parity",
+                    "label": "Content polish matching existing problems",
+                    "ruleStatement": "Each new problem's description, hints, and difficulty rating meet the same bar as the existing 6 problems.",
+                    "passCriteria": [
+                        "HTML description includes problem statement, at least one worked example, and constraints",
+                        "At least 1 hint per problem, progressively narrowing without giving away the answer",
+                        "Difficulty is Easy or Medium for at least 3 of the 3-5 problems",
+                        "No placeholder text remains in any field"
+                    ],
+                    "failureExamples": [
+                        "Description is a single unformatted sentence with no example or constraints",
+                        "Hint just restates the problem title",
+                        "All 5 problems are marked Hard"
+                    ],
+                    "minScore": 7
+                }
+            ],
+            "healerHint": "The most likely failure is a hidden test that relies on setTimeout-based delays or non-deterministic ordering pushing execution time near the 6000ms budget or causing flaky repeat runs \u2014 fix by rewriting the reference solution and test fixtures to resolve purely through microtask chains with no real timers."
+        },
+        {
+            "id": "generators-problem-authoring",
+            "order": 2,
+            "name": "Author Generator Functions topic problems",
+            "goal": "Add 3-5 new Problems for the Generator Functions topic to the problem bank, authored so the tested function is a plain function that internally consumes a generator and returns JSON-serializable data, with full JS+TS starter, visible+hidden tests, hints, and HTML description.",
+            "boundedContext": "Problem bank \u2013 Generator Functions topic",
+            "layer": "interface",
+            "blastRadius": "medium",
+            "inputs": [
+                "confirmation that generator syntax already compiles and runs correctly in the sandbox worker (no code change needed)",
+                "existing 6 problems' slug/tag/difficulty/mode conventions"
+            ],
+            "expectedResult": "3-5 new Problem entries tagged for the Generator Functions topic, each with a plain fn/class-mode entry point wrapping internal generator use, JSON-serializable tests, unique slugs, complete JS+TS starters, hints, and HTML description.",
+            "dependsOn": [],
+            "rubric": [
+                {
+                    "id": "entry-point-contract",
+                    "label": "Plain fn/class entry point wraps generator internally",
+                    "ruleStatement": "The exported/tested function or class method in each problem's solution and starter is a plain function (or class method) that internally creates and consumes a generator, never exposing a generator/iterator object as its return value.",
+                    "passCriteria": [
+                        "Reference solution's exported symbol is a regular function/method (not function*) at the fn/class-mode boundary",
+                        "Any generator used internally is fully consumed (loop, spread, or Array.from) before the function returns",
+                        "No function* or yield at the top-level export signature"
+                    ],
+                    "failureExamples": [
+                        "Exported function is itself function* solve(...) so the sandbox receives an iterator instead of a value",
+                        "Function returns the generator object directly instead of draining it into an array/object"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "json-serializable-output",
+                    "label": "Return values are JSON-serializable",
+                    "ruleStatement": "Every value returned by the tested function across all new problems can be passed through JSON.stringify/parse without loss.",
+                    "passCriteria": [
+                        "No returned value contains functions, Symbols, Maps, Sets, iterators, or non-plain class instances",
+                        "At least one test per problem asserts on the returned value via deep-equality against a plain literal",
+                        "Running each solution against its hidden tests produces output matching expected JSON"
+                    ],
+                    "failureExamples": [
+                        "Test expects {done:true, value:...} \u2014 a raw IteratorResult leaked through instead of unwrapped data",
+                        "Returned Set/Map causes deep-equal comparison to fail structurally"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "test-determinism-repeatability",
+                    "label": "Tests are deterministic and repeatable across runs",
+                    "ruleStatement": "Running each problem's tests twice against the same reference solution yields identical pass/fail results and output values both times.",
+                    "passCriteria": [
+                        "No test relies on generator object identity or exhausted-generator reuse across cases",
+                        "Each hidden test independently invokes the entry point (fresh generator instance per call)",
+                        "Executing the full suite twice produces the same result set"
+                    ],
+                    "failureExamples": [
+                        "Second test case fails because the generator from test case 1 was already exhausted and reused",
+                        "A test depends on unstable Map/object iteration order, causing flaky pass/fail"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "slug-and-metadata-conventions",
+                    "label": "Slugs, tags, difficulty, and starters follow existing conventions",
+                    "ruleStatement": "Each new Problem has a unique slug, is tagged for the Generator Functions topic, has a difficulty set, and ships complete JS and TS starters consistent with existing problem structure.",
+                    "passCriteria": [
+                        "3-5 new Problem records exist, each with a distinct slug verified against the full existing+new slug list",
+                        "Each Problem is tagged with the Generator Functions topic tag",
+                        "Each Problem has both starter.js and starter.ts, non-empty, matching the fn/class-mode signature used by its tests",
+                        "TS starter compiles cleanly under tsCompiler"
+                    ],
+                    "failureExamples": [
+                        "New problem reuses an existing slug, causing a lookup collision",
+                        "TS starter is a copy-paste of JS with no type annotations, or fails to compile",
+                        "Problem is missing the Generator Functions tag"
+                    ],
+                    "minScore": 7
+                },
+                {
+                    "id": "content-and-edge-case-coverage",
+                    "label": "Hidden/visible test split and content completeness",
+                    "ruleStatement": "Each problem has a non-trivial split of visible and hidden tests covering generator-specific edge cases, plus a complete HTML description and at least one hint.",
+                    "passCriteria": [
+                        "Each problem has at least 1 visible test and at least 2 hidden tests",
+                        "Hidden tests include at least one generator-specific edge case per problem (early termination, empty generator, multiple sequential pulls)",
+                        "Each problem has a non-empty HTML description and at least one hint string"
+                    ],
+                    "failureExamples": [
+                        "All tests for a problem are visible, so hidden scoring has nothing to check",
+                        "No test exercises generator exhaustion or early-return, only the trivial happy path",
+                        "Description field is empty or contains unrendered markdown"
+                    ],
+                    "minScore": 7
+                }
+            ],
+            "healerHint": "Most likely failure is entry-point-contract/json-serializable-output failing together because the solution returns the raw generator or an IteratorResult instead of draining it \u2014 fix by wrapping the internal generator consumption in a loop (or Array.from/spread) inside the exported fn/class method so it materializes a plain array/object before returning."
+        },
+        {
+            "id": "react-logic-problem-authoring",
+            "order": 3,
+            "name": "Author React-themed logic topic problems",
+            "goal": "Add 3-5 new Problems that are pure JS/TS algorithmic simulations of React concepts (e.g. simplified useState/memoize), with no DOM or React runtime dependency, matching the existing 6 problems' polish.",
+            "boundedContext": "Problem bank \u2013 React-themed logic topic",
+            "layer": "interface",
+            "blastRadius": "medium",
+            "inputs": [
+                "confirmation no DOM/React runtime is available in the worker and none is needed",
+                "existing 6 problems' slug/tag/difficulty/mode conventions"
+            ],
+            "expectedResult": "3-5 new Problem entries tagged for the React-themed logic topic, in fn mode, pure-logic simulations with JSON-serializable tests, unique slugs, complete JS+TS starters, hints, and HTML description.",
+            "dependsOn": [],
+            "rubric": [
+                {
+                    "id": "pure-logic-no-runtime-deps",
+                    "label": "Pure JS/TS simulation with no DOM or React runtime dependency",
+                    "ruleStatement": "Every problem's starter, solution, and ProblemTest code executes correctly in the sandbox worker using only vanilla JS/TS constructs, with zero references to document, window, React, ReactDOM, JSX, or any React package import.",
+                    "passCriteria": [
+                        "grep across all new problems' starter/test files shows no document., window., React, ReactDOM, or .jsx/.tsx usage",
+                        "no import statement references react, react-dom, or a DOM shim",
+                        "each problem runs to completion in the sandbox worker in isolation"
+                    ],
+                    "failureExamples": [
+                        "a 'useState' problem's test calls render() or imports react-dom/test-utils",
+                        "a starter references window.requestAnimationFrame instead of a plain counter/queue"
+                    ],
+                    "minScore": 9
+                },
+                {
+                    "id": "test-determinism-and-repeatability",
+                    "label": "Hidden/visible tests are deterministic and idempotent under repeated sandbox runs",
+                    "ruleStatement": "Given the same submitted solution, every ProblemTest produces the same pass/fail result on repeated executions, with no dependence on wall-clock time, real timers, randomness, or unresolved microtask ordering.",
+                    "passCriteria": [
+                        "no test asserts on Date.now()/performance.now() output or unseeded Math.random()",
+                        "timer-based simulations use a deterministic fake clock/queue, not real setTimeout",
+                        "tests assert on resolved/awaited values or fully-drained generator output, never on in-flight state",
+                        "running the same reference solution 3x yields identical pass/fail output each time"
+                    ],
+                    "failureExamples": [
+                        "a Promise-chaining problem's test occasionally fails because it checks state before the microtask queue flushed",
+                        "a generator problem test relies on real elapsed time via setTimeout"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "slug-mode-metadata-consistency",
+                    "label": "Unique slugs, fn mode, and topic/tag/difficulty metadata match existing conventions",
+                    "ruleStatement": "Each new Problem has a slug that does not collide with any existing Problem, is registered in fn mode, and carries topic/tag/difficulty metadata consistent with existing conventions.",
+                    "passCriteria": [
+                        "each new problem's slug is absent from the current slug list before insertion",
+                        "every new problem's mode field is fn",
+                        "each new problem has a difficulty value and at least one topic tag drawn from the same taxonomy style"
+                    ],
+                    "failureExamples": [
+                        "two new problems both use slug debounce-simulator",
+                        "a new problem is authored in class mode while all React-logic problems use fn mode",
+                        "a problem is tagged with an ad-hoc string outside the Title Case taxonomy"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "starter-hint-description-completeness",
+                    "label": "Complete JS and TS starters, hints, and HTML description per problem",
+                    "ruleStatement": "Every new Problem ships a compilable JS starter, a TS starter that passes tsCompiler with no type errors, at least one non-trivial hint, and an HTML description that states the React concept being simulated and the exact function signature.",
+                    "passCriteria": [
+                        "both starter.js and starter.ts exist and are non-empty for each problem",
+                        "TS starter compiles cleanly under tsCompiler",
+                        "each problem has >=1 hint string that is not a restatement of the title",
+                        "the HTML description names the React concept and documents the exact fn-mode signature"
+                    ],
+                    "failureExamples": [
+                        "a memoize-simulation problem ships only a JS starter with no .ts counterpart",
+                        "the TS starter fails tsCompiler because the return type doesn't match the hidden test's expected shape",
+                        "the HTML description says 'simulate React state' without specifying the signature"
+                    ],
+                    "minScore": 7
+                }
+            ],
+            "healerHint": "The most likely failure is flaky hidden tests from unresolved Promise/microtask timing now that the sandbox's Promise handling was just changed \u2014 fix by having tests always await the solution's returned Promise (or drain a deterministic fake-timer queue) before asserting, rather than checking state synchronously."
+        },
+        {
+            "id": "new-problems-grading-verification",
+            "order": 4,
+            "name": "Verify new problems grade correctly end-to-end",
+            "goal": "Run every newly authored Promises, Generator Functions, and React-themed logic Problem's visible and hidden ProblemTests through the (now Promise-aware) sandbox worker to confirm correct grading within the 6000ms run budget, and confirm no slug or num collisions across the new problems or with the existing 6.",
+            "boundedContext": "problem bank content verification",
+            "layer": "cross-cutting",
+            "blastRadius": "small",
+            "inputs": [
+                "outputs of promises-problem-authoring, generators-problem-authoring, react-logic-problem-authoring",
+                "fixed sandbox.worker.ts from sandbox-promise-handling-fix"
+            ],
+            "expectedResult": "All 9-15 new Problems pass their own visible and hidden ProblemTests via actual sandbox execution inside the 6000ms budget, with no slug or num collisions; any failing case is fixed in its authoring phase's content before sign-off.",
+            "dependsOn": [
+                "promises-problem-authoring",
+                "generators-problem-authoring",
+                "react-logic-problem-authoring"
+            ],
+            "rubric": [
+                {
+                    "id": "real-sandbox-execution-evidence",
+                    "label": "Executed via actual sandbox worker, not simulated",
+                    "ruleStatement": "Every visible and hidden ProblemTest for all 9-15 new Problems must show evidence of having been run through the real sandbox.worker.ts (post Promise-fix), not eyeballed, hand-traced, or run outside the sandbox harness.",
+                    "passCriteria": [
+                        "Deliverable includes a per-Problem execution log naming the sandbox worker invocation for each Problem's full test set",
+                        "Both fn mode and class mode entries appear where a Problem supports both",
+                        "Report shows tsCompiler-compiled output was what actually ran for TS starters"
+                    ],
+                    "failureExamples": [
+                        "A checklist saying 'all tests pass' with no run output attached",
+                        "Only hidden tests show run evidence; visible tests are asserted 'obviously fine'",
+                        "Tests were run against a script that reimplements grading logic instead of sandbox.worker.ts"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "all-visible-hidden-tests-pass",
+                    "label": "100% of visible and hidden ProblemTests pass",
+                    "ruleStatement": "For each of the 9-15 new Problems, every visible and hidden ProblemTest must report a pass verdict from the sandbox grading run.",
+                    "passCriteria": [
+                        "Per-Problem pass/fail matrix shows 0 failing ProblemTests across all new Problems",
+                        "The reference solution and at least one intentionally-buggy submission were graded to confirm hidden tests discriminate correct from incorrect",
+                        "Any Promise-based or Generator-based assertion resolves to the expected value, not merely 'did not error'"
+                    ],
+                    "failureExamples": [
+                        "A hidden test for a Promise problem times out silently and is reported as 'pass'",
+                        "A hidden edge-case test is skipped in the report",
+                        "The buggy-submission control case also 'passes'"
+                    ],
+                    "minScore": 10
+                },
+                {
+                    "id": "run-budget-compliance",
+                    "label": "Every test run completes within the 6000ms budget",
+                    "ruleStatement": "Each ProblemTest execution for the new Problems must complete, including Promise/generator resolution, within the sandbox's 6000ms run budget.",
+                    "passCriteria": [
+                        "Execution report includes measured runtime per Problem and every value is < 6000ms",
+                        "Promise-heavy and generator-heavy problems show comfortable margin (e.g. <4000ms)",
+                        "No test relies on force-termination at the budget boundary as its pass condition"
+                    ],
+                    "failureExamples": [
+                        "A Promise problem's hidden test only 'passes' because the 6000ms timeout fires and is treated as pass",
+                        "Reported runtimes are omitted for the Promises topic",
+                        "A generator problem with unbounded iteration risks budget overrun"
+                    ],
+                    "minScore": 8
+                },
+                {
+                    "id": "no-slug-num-collisions",
+                    "label": "No slug or num collisions across new and existing Problems",
+                    "ruleStatement": "None of the 9-15 new Problems may share a slug or num with each other or with any of the existing 6 Problems already in the bank.",
+                    "passCriteria": [
+                        "A collision-check report lists all new Problem slugs and nums alongside the existing 6 and shows zero duplicates",
+                        "The check was run against the actual persisted problemBank.ts content, not just draft documents",
+                        "Slugs are checked case-insensitively and with hyphen normalization"
+                    ],
+                    "failureExamples": [
+                        "Two Problems both authored with slug promise-chain-basics",
+                        "A new Problem's num accidentally reuses an existing num",
+                        "The collision check only compares new Problems to each other, forgetting the existing 6"
+                    ],
+                    "minScore": 10
+                },
+                {
+                    "id": "failures-fixed-upstream-not-patched-here",
+                    "label": "Any failing case is corrected in its authoring phase, not patched in verification",
+                    "ruleStatement": "If a Problem's ProblemTest fails during this verification phase, the fix must land in that Problem's originating authoring-phase content, and the deliverable must show a re-run confirming the fix.",
+                    "passCriteria": [
+                        "For every failure, the report traces it to its originating authoring phase and shows the corrected artifact",
+                        "A second sandbox run after the fix shows the previously-failing test now passing",
+                        "No sign-off shows a Problem marked pass by loosening or skipping its hidden test"
+                    ],
+                    "failureExamples": [
+                        "A failing hidden test is deleted or marked skip so the pass count looks clean",
+                        "A fix is applied as an ad-hoc patch inside verification notes with no update to the authoring phase's Problem definition",
+                        "A failure is noted but no re-run evidence confirms it was resolved"
+                    ],
+                    "minScore": 7
+                },
+                {
+                    "id": "project-build-typecheck-passes",
+                    "label": "Project's real build/typecheck (tsc -b) passes with new content included",
+                    "ruleStatement": "The project's actual build script (`tsc -b && vite build`, per package.json) must be run against the full repo state including problemBank.ts's new Promises/Generator/React-logic entries, and `tsc -b` must complete with zero type errors \u2014 this is separate evidence from any per-problem tsCompiler-in-sandbox check, which only validates individual starter snippets in isolation and does not exercise the real project-wide compiler graph.",
+                    "passCriteria": [
+                        "`tsc -b` (or the full `npm run build`) is actually executed from the repo root after problemBank.ts is updated with all new entries, and the deliverable shows its exit code/output",
+                        "`tsc -b` completes with zero type errors attributable to the new Problem entries or any supporting code changed in this task",
+                        "This check is run in addition to, not instead of, the per-problem tsCompiler-in-sandbox checks already covered by real-sandbox-execution-evidence",
+                        "There is no separate test-runner script in package.json, so 'existing test runner passes' from the success definition requires no additional run or evidence beyond noting its absence"
+                    ],
+                    "failureExamples": [
+                        "Sign-off cites only per-problem tsCompiler success and never actually runs `tsc -b` against the committed problemBank.ts",
+                        "`tsc -b` is run but reports type errors (e.g. a new Problem's TS starter or a shared type import breaks the project-wide compile) and sign-off proceeds anyway",
+                        "The report invents a 'test suite passed' claim despite no test script existing in package.json"
+                    ],
+                    "minScore": 9
+                }
+            ],
+            "healerHint": "The rubric most often fails on run-budget-compliance because Promise/generator hidden tests silently hang until the 6000ms sandbox timeout is misread as a pass \u2014 fix by asserting explicit resolved/rejected values (never bare 'did not throw') and re-running with per-test timing logged."
+        }
+    ],
+    "successCriteria": [
+        "src/infrastructure/problemBank.ts gains 9-15 new Problem entries (3-5 each for Promises, Generator Functions, React-themed logic), each conforming to the existing Problem interface with JS+TS starter code, visible+hidden tests, non-empty hints, and an HTML description.",
+        "Fix sandbox worker Promise handling: runFn and runClass await any Promise returned by the tested function/method before comparison; existing 6 problems grade identically to before.",
+        "Author Promises topic problems: 3-5 new Problem entries with microtask-based (no real-timer) tests fitting the 6000ms budget.",
+        "Author Generator Functions topic problems: 3-5 new Problem entries whose tested function is a plain fn/class entry point wrapping internal generator consumption, returning JSON-serializable data.",
+        "Author React-themed logic topic problems: 3-5 new Problem entries that are pure JS/TS simulations of React concepts with no DOM/React runtime dependency.",
+        "Verify new problems grade correctly end-to-end: all 9-15 new Problems pass their visible and hidden tests via actual sandbox execution within the 6000ms budget, with no slug/num collisions.",
+        "The project's real build/typecheck pipeline (`tsc -b` per package.json's build script `tsc -b && vite build`) is actually run and passes with problemBank.ts's new entries included, as evidence distinct from per-problem tsCompiler-in-sandbox checks; the repo has no separate test-runner script, so 'any existing test runner passes' from the success definition is vacuously satisfied and requires no additional action."
+    ],
+    "deferred": [
+        "Real React component rendering, JSX, or DOM assertions \u2014 explicitly excluded by the user; React problems stay in the existing fn/class execution model.",
+        "Building a React-capable rendering sandbox or adding a DOM/jsdom environment \u2014 not needed since React problems are logic-only.",
+        "Rewriting or generalizing the sandbox's execution model beyond the minimal Promise-awaiting fix \u2014 discovery showed no further gap.",
+        "Adding new topic areas beyond Promises, Generator Functions, and React.",
+        "UI/UX changes to how problems are displayed, filtered, or navigated.",
+        "Changing the Problem/TestCase domain schema \u2014 discovery confirmed the current shape is sufficient.",
+        "Editing or re-polishing the existing 6 problems \u2014 the task is additive only.",
+        "Backend/persistence changes \u2014 problemBank.ts remains the static source of truth.",
+        "Extending useRunCode.ts's 6000ms total run timeout to accommodate slower async problems \u2014 new async problems must instead resolve via microtasks with no real wall-clock delay.",
+        "Strict enforcement/uniqueness validation tooling for the cosmetic num field \u2014 non-functional field, validation ceremony would be YAGNI ceremony."
+    ]
+}
