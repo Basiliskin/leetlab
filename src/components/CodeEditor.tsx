@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { Annotation, EditorState, StateEffect } from "@codemirror/state";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
+import { Diagnostic, linter, lintGutter } from "@codemirror/lint";
 import { javascript, javascriptLanguage, scopeCompletionSource } from "@codemirror/lang-javascript";
 import {
   autocompletion,
@@ -86,6 +87,32 @@ const syntaxStyle = HighlightStyle.define([
   { tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator], color: "#8b98a9" },
 ]);
 
+// Flag Lezer parse-error nodes ("⚠") as lint diagnostics. Error nodes are
+// skipped during traversal so nested errors only report the outermost span.
+const syntaxLint = linter((view) => {
+  const diagnostics: Diagnostic[] = [];
+  syntaxTree(view.state).iterate({
+    enter(node) {
+      if (node.type.isError) {
+        if (node.from < node.to) {
+          const text = view.state.doc.sliceString(node.from, node.to);
+          diagnostics.push({
+            from: node.from,
+            to: node.to,
+            severity: "error",
+            message:
+              text.length > 24
+                ? "Syntax error"
+                : `Unexpected ${text.trim() ? JSON.stringify(text) : "token"}`,
+          });
+        }
+        return false;
+      }
+    },
+  });
+  return diagnostics;
+});
+
 function extensionsFor(lang: "js" | "ts") {
   const language = javascript(lang === "ts" ? { typescript: true } : undefined);
   return [
@@ -120,6 +147,8 @@ function extensionsFor(lang: "js" | "ts") {
     }),
     editorTheme,
     syntaxHighlighting(syntaxStyle),
+    lintGutter(),
+    syntaxLint,
   ];
 }
 
