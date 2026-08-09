@@ -3,7 +3,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Annotation, EditorState, StateEffect } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { javascript } from "@codemirror/lang-javascript";
+import { javascript, javascriptLanguage, scopeCompletionSource } from "@codemirror/lang-javascript";
 import {
   autocompletion,
   closeBrackets,
@@ -90,6 +90,9 @@ function extensionsFor(lang: "js" | "ts") {
   const language = javascript(lang === "ts" ? { typescript: true } : undefined);
   return [
     language,
+    javascriptLanguage.data.of({
+      autocomplete: scopeCompletionSource(globalThis),
+    }),
     autocompletion(),
     closeBrackets(),
     history(),

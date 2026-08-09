@@ -21,8 +21,7 @@ export function Topbar() {
       <div className="spacer" />
       <div className="progress">
         <div className="segs">
-          {/* render segment placeholders */}
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: PROBLEM_BANK.length }).map((_, i) => (
             <i key={i} className={i < solvedCount ? "on" : ""} />
           ))}
         </div>

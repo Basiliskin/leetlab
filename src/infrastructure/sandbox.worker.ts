@@ -59,6 +59,11 @@ function mkLog(lvl: string) {
     const parts: string[] = []
     for (let i = 0; i < args.length; i++) parts.push(fmtArg(args[i]))
     LOG.push({ l: lvl, t: parts.join(' ') })
+    try {
+      postMessage({ type: 'console', level: lvl, args })
+    } catch {
+      postMessage({ type: 'console', level: lvl, args: [parts.join(' ')] })
+    }
   }
 }
 const cns = {

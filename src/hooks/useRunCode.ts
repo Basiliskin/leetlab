@@ -59,6 +59,9 @@ export function useRunCode() {
             worker.terminate()
             settled = true
             reject({ type: 'compile', error: m.error, logs: m.logs })
+          } else if (m.type === 'console') {
+            const fn = (console as any)[m.level] ?? console.log
+            fn.apply(console, m.args)
           } else if (m.type === 'case') {
             results[m.i] = m
             if (m.logs) logs.push(...m.logs)

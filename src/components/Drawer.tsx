@@ -36,6 +36,16 @@ export function Drawer() {
             {lastRun ? `${lastRun.passed}/${lastRun.total}` : ""}
           </span>
         </button>
+        <button
+          className={`ptab ${activeTab === "console" ? "on" : ""}`}
+          id="tabConsole"
+          onClick={() => setActiveTab("console")}
+        >
+          Console{" "}
+          <span className="badge" hidden={!(lastRun && lastRun.logs && lastRun.logs.length)}>
+            {lastRun && lastRun.logs ? lastRun.logs.length : ""}
+          </span>
+        </button>
       </div>
       <div className="drawer-body">
         <div className="tc-view" hidden={activeTab !== "test"}>
@@ -191,6 +201,27 @@ export function Drawer() {
           ) : (
             <div className="empty">
               <b>No results yet</b>
+            </div>
+          )}
+        </div>
+
+        <div className="console-view" hidden={activeTab !== "console"}>
+          {lastRun && lastRun.logs && lastRun.logs.length ? (
+            <div className="console-block">
+              <div className="ch">
+                console output · {lastRun.logs.length} line
+                {lastRun.logs.length > 1 ? "s" : ""}
+              </div>
+              {lastRun.logs.map((l: any, i: number) => (
+                <div key={i} className={`cl ${l.l === "log" ? "" : l.l}`}>
+                  {l.t}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <b>No console output</b>
+              <span>Logs from console.log() will appear here.</span>
             </div>
           )}
         </div>

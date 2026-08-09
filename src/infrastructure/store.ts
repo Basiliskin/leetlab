@@ -61,8 +61,8 @@ interface AppState {
   tsStatus?: string
   setTsStatus: (st: string) => void
   // which tab is active in the testcases/result drawer
-  activeResultTab: 'test' | 'result'
-  setActiveResultTab: (tab: 'test' | 'result') => void
+  activeResultTab: 'test' | 'result' | 'console'
+  setActiveResultTab: (tab: 'test' | 'result' | 'console') => void
 }
 
 const defaultProblemState = (): ProblemState => ({

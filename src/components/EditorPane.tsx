@@ -1,7 +1,8 @@
 import { useAppStore } from "../infrastructure/store";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRunCode, parseCases } from "../hooks/useRunCode";
 import { tsCompiler } from "../infrastructure/tsCompiler";
+import { formatCode } from "../infrastructure/formatCode";
 import type { ParsedTestCase } from "../domain/TestCase";
 import CodeEditor from "./CodeEditor";
 
@@ -10,8 +11,37 @@ export function EditorPane() {
 
   const { run } = useRunCode();
   const [busy, setBusy] = useState(false);
+  const [fmtBusy, setFmtBusy] = useState(false);
+  const [fmtMsg, setFmtMsg] = useState<string | null>(null);
+  const fmtTimer = useRef<number | null>(null);
   const setLastRun = useAppStore((s) => s.setLastRun);
   const setTsStatus = useAppStore((s) => s.setTsStatus);
+
+  function flash(msg: string) {
+    setFmtMsg(msg);
+    if (fmtTimer.current) window.clearTimeout(fmtTimer.current);
+    fmtTimer.current = window.setTimeout(() => setFmtMsg(null), 1800);
+  }
+
+  async function handleFormat() {
+    if (fmtBusy) return;
+    setFmtBusy(true);
+    try {
+      const prob = getProblem(currentSlug);
+      if (!prob) return;
+      const st = getProblemState(currentSlug);
+      const code = st[lang] ?? prob.starter[lang] ?? "";
+      const formatted = await formatCode(code, lang);
+      if (formatted !== code) {
+        useAppStore.getState().saveCode(formatted);
+      }
+      flash("Formatted");
+    } catch {
+      flash("Fix syntax errors first");
+    } finally {
+      setFmtBusy(false);
+    }
+  }
 
   useEffect(() => {
     // load typescript compiler and update badge status
@@ -210,6 +240,19 @@ export function EditorPane() {
             TypeScript
           </button>
         </div>
+        <span className={`autosave ${fmtMsg ? "show" : ""} ${fmtMsg === "Fix syntax errors first" ? "err" : ""}`}>
+          {fmtMsg}
+        </span>
+        <div className="spacer" />
+        <button
+          className={`btn-format ${fmtBusy ? "busy" : ""}`}
+          onClick={handleFormat}
+          disabled={fmtBusy}
+          title="Format code with Prettier"
+        >
+          <span className="spin" />
+          {fmtBusy ? "Formatting…" : "Format"}
+        </button>
       </div>
       <CodeEditor />
       <div className="editor-foot">
