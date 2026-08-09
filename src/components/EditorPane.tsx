@@ -1,13 +1,134 @@
-import Editor from "@monaco-editor/react";
-import { useAppStore } from "@infra/store";
+import { useAppStore } from "../infrastructure/store";
+import { useState, useEffect } from "react";
+import { useRunCode, parseCases } from "../hooks/useRunCode";
+import { tsCompiler } from "../infrastructure/tsCompiler";
+import CodeEditor from "./CodeEditor";
 
 export function EditorPane() {
-  const { lang, currentSlug, getProblem, getProblemState, saveCode } =
-    useAppStore();
+  const { lang, currentSlug, getProblem, getProblemState } = useAppStore();
 
-  const problem = getProblem(currentSlug);
-  const state = getProblemState(currentSlug);
-  const defaultValue = state[lang] || problem?.starter[lang] || "";
+  const { run } = useRunCode();
+  const [busy, setBusy] = useState(false);
+  const setLastRun = useAppStore((s) => s.setLastRun);
+  const setTsStatus = useAppStore((s) => s.setTsStatus);
+
+  useEffect(() => {
+    // load typescript compiler and update badge status
+    tsCompiler.load().then(() => {
+      setTsStatus(tsCompiler.ready ? "ready" : "fallback");
+    });
+  }, []);
+
+  async function handleRun() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const prob = getProblem(currentSlug)!;
+      const st = getProblemState(currentSlug);
+      let code = st[lang] || prob.starter[lang];
+      if (lang === "ts") {
+        try {
+          code = tsCompiler.compile(code);
+        } catch (e: any) {
+          // save compile error and abort run
+          setLastRun(currentSlug, {
+            compile: {
+              name: e.name || "TS Error",
+              message: e.message || String(e),
+            },
+            results: [],
+            logs: [],
+            verdict: "Compile Error",
+            passed: 0,
+            total: 0,
+            ms: null,
+          });
+          setBusy(false);
+          return;
+        }
+      }
+
+      const cases = getCasesForUI();
+      const parsed = parseCases(cases, prob);
+      const runnable = parsed.filter((p) => !p.parseError);
+      if (!runnable.length) {
+        alert("No valid testcases to run");
+        return;
+      }
+
+      const { results, logs } = await run(code, prob, runnable as any);
+
+      // process results
+      let passed = 0,
+        total = 0,
+        ms = 0;
+      runnable.forEach((p, i) => {
+        const m = results[i];
+        const hasExp = Object.prototype.hasOwnProperty.call(p, "expected");
+        if (hasExp) {
+          total++;
+          if (m && m.ok && m.pass) passed++;
+        }
+        if (m && m.ms) ms += m.ms;
+        const mark = !m
+          ? "tle"
+          : !m.ok
+            ? "err"
+            : m.pass === null
+              ? "pass"
+              : m.pass
+                ? "pass"
+                : "fail";
+        useAppStore.getState().setCaseMark(p.id, mark);
+      });
+
+      let verdict = "Wrong Answer";
+      if (total > 0 && passed === total) verdict = "Accepted";
+      if (total === 0) verdict = "No Expected Cases";
+
+      useAppStore.getState().addSubmission({
+        t: Date.now(),
+        lang,
+        verdict,
+        passed,
+        total,
+        ms: total > 0 ? ms : null,
+      });
+
+      // save last run details for result view
+      setLastRun(currentSlug, { results, logs, verdict, passed, total, ms });
+
+      if (verdict === "Accepted") useAppStore.getState().markSolved();
+    } catch (e: any) {
+      console.error(e);
+      alert("Run failed: " + (e?.type || e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function getCasesForUI() {
+    const state = getProblemState(currentSlug);
+    const ps = state?.cases || [];
+    // fallback to defaults from problem if empty
+    if (!ps.length) {
+      const p = getProblem(currentSlug)!;
+      return p.tests.map((t, i) => ({
+        id: `builtin-${i}`,
+        inputText: JSON.stringify(
+          p.mode === "class" ? (t as any).calls : (t as any).in,
+          null,
+          1,
+        ),
+        expectedText: JSON.stringify((t as any).out),
+      }));
+    }
+    return ps.map((c: any) => ({
+      id: c.id,
+      inputText: c.inputText,
+      expectedText: c.expectedText,
+    }));
+  }
 
   return (
     <div className="editor-pane">
@@ -30,25 +151,32 @@ export function EditorPane() {
           </button>
         </div>
       </div>
-      <div className="editor-body">
-        <Editor
-          height="100%"
-          language={lang === "ts" ? "typescript" : "javascript"}
-          value={defaultValue}
-          onChange={(v) => v && saveCode(v)}
-          theme="vs-dark"
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            fontFamily: "JetBrains Mono, monospace",
-            lineNumbers: "on",
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: 2,
-            wordWrap: "off",
-          }}
-        />
+      <CodeEditor />
+      <div className="editor-foot">
+        <span className="kbd-hint">
+          <kbd>Ctrl</kbd>+<kbd>↵</kbd> run · <kbd>Ctrl</kbd>+<kbd>⇧</kbd>+
+          <kbd>↵</kbd> submit
+        </span>
+        <div className="spacer" />
+        <button
+          className={`btn btn-run ${busy ? "busy" : ""}`}
+          onClick={() => handleRun()}
+          disabled={busy}
+        >
+          <span className="spin" />
+          Run Code
+        </button>
+        <button
+          className={`btn btn-submit ${busy ? "busy" : ""}`}
+          onClick={() => handleRun()}
+          disabled={busy}
+        >
+          <span className="spin" />
+          Submit
+        </button>
       </div>
     </div>
   );
 }
+
+export default EditorPane;

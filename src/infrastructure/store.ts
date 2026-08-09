@@ -51,6 +51,12 @@ interface AppState {
   markSolved: () => void
   setCaseMark: (caseId: string, mark: string) => void
   resetCaseMarks: () => void
+  // last run results per-problem
+  lastRuns?: Record<string, any>
+  setLastRun: (slug: string, payload: any) => void
+  // typescript compiler status
+  tsStatus?: string
+  setTsStatus: (st: string) => void
 }
 
 const defaultProblemState = (): ProblemState => ({
@@ -203,6 +209,14 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ caseMarks: { ...s.caseMarks, [caseId]: mark } })),
 
       resetCaseMarks: () => set({ caseMarks: {} }),
+        // last run results per-problem
+        lastRuns: {},
+        setLastRun: (slug: string, payload: any) =>
+          set((s) => ({ lastRuns: { ...(s.lastRuns || {}), [slug]: payload } })),
+
+        // typescript compiler status
+        tsStatus: 'loading',
+        setTsStatus: (st: string) => set({ tsStatus: st }),
     }),
     {
       name: 'leetlab.v2',

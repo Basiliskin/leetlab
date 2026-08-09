@@ -1,7 +1,45 @@
+import { useAppStore } from "../infrastructure/store";
+import { PROBLEM_BANK } from "../infrastructure/problemBank";
+
 export function Topbar() {
+  const solvedCount = Object.values(
+    useAppStore.getState().problems || {},
+  ).filter((p) => p.solvedAt).length;
+  const tsStatus = useAppStore((s) => s.tsStatus);
+
   return (
     <header className="topbar">
-      <div className="brand">LeetLab</div>
+      <div className="brand">
+        <div className="logo">{}</div>
+        <div>
+          <b>
+            leet<span>lab</span>
+          </b>{" "}
+          <small>in-browser judge</small>
+        </div>
+      </div>
+      <div className="spacer" />
+      <div className="progress">
+        <div className="segs">
+          {/* render segment placeholders */}
+          {Array.from({ length: 6 }).map((_, i) => (
+            <i key={i} className={i < solvedCount ? "on" : ""} />
+          ))}
+        </div>
+        <div className="cnt">
+          <b>{solvedCount}</b>/<span>{PROBLEM_BANK.length}</span> solved
+        </div>
+      </div>
+      <div
+        className={`tsbadge ${tsStatus === "ready" ? "ok" : tsStatus === "fallback" ? "warn" : ""}`}
+        id="tsBadge"
+      >
+        {tsStatus === "ready"
+          ? "TS · compiler ready"
+          : tsStatus === "fallback"
+            ? "TS · fallback stripper"
+            : "TS · loading…"}
+      </div>
     </header>
   );
 }
