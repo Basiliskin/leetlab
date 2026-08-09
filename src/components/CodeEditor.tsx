@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { Annotation, EditorState, StateEffect } from "@codemirror/state";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import {
   autocompletion,
@@ -71,6 +73,19 @@ const editorTheme = EditorView.theme({
   },
 });
 
+const syntaxStyle = HighlightStyle.define([
+  { tag: tags.comment, color: "#5c6877", fontStyle: "italic" },
+  { tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword, tags.self], color: "#ffa116" },
+  { tag: [tags.string, tags.special(tags.string), tags.character], color: "#3fb950" },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "#d29922" },
+  { tag: [tags.regexp, tags.escape], color: "#f85149" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "#58c4dc" },
+  { tag: [tags.definition(tags.variableName), tags.variableName], color: "#e8edf4" },
+  { tag: [tags.propertyName, tags.attributeName], color: "#e8edf4" },
+  { tag: [tags.typeName, tags.className, tags.namespace], color: "#ffc25e" },
+  { tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator], color: "#8b98a9" },
+]);
+
 function extensionsFor(lang: "js" | "ts") {
   const language = javascript(lang === "ts" ? { typescript: true } : undefined);
   return [
@@ -101,6 +116,7 @@ function extensionsFor(lang: "js" | "ts") {
       }
     }),
     editorTheme,
+    syntaxHighlighting(syntaxStyle),
   ];
 }
 
