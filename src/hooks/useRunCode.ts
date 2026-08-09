@@ -1,5 +1,4 @@
 import { useCallback, useRef } from 'react'
-import { useAppStore } from '@infra/store'
 import type { ParsedTestCase } from '@domain/TestCase'
 import type { Problem } from '@domain/Problem'
 // @ts-ignore - Vite worker import
