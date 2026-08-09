@@ -73,13 +73,20 @@ const defaultProblemState = (): ProblemState => ({
 /* =========================================
    PURE DOMAIN HELPER (Moved outside store)
    ========================================= */
+const defaultCasesCache = new Map<string, TestCase[]>()
+
 export const getDefaultCases = (problem: Problem): TestCase[] => {
-  return problem.tests.map((t, i) => ({
+  const cached = defaultCasesCache.get(problem.slug)
+  if (cached) return cached
+
+  const cases = problem.tests.map((t, i) => ({
     id: `builtin-${i}`,
     inputText: JSON.stringify(problem.mode === 'class' ? t.calls : t.in, null, 1),
     expectedText: JSON.stringify(t.out),
     builtin: true,
   }))
+  defaultCasesCache.set(problem.slug, cases)
+  return cases
 }
 
 export const useAppStore = create<AppState>()(
