@@ -209,7 +209,7 @@
   .cm-host .cm-editor{position:absolute;inset:0;height:100%}
 
   /* ---------- drawer ---------- */
-  .drawer{flex:0 0 238px;border-top:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel2)}
+  .drawer{flex:0 0 238px;min-height:0;overflow:hidden;border-top:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel2)}
   .drawer .pane-tabs{border-bottom:1px solid var(--line-soft)}
   .drawer-body{flex:1;overflow-y:auto;min-height:0}
   .tc-view{padding:12px 14px}
