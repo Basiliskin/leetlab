@@ -2,6 +2,7 @@ import { useAppStore } from "../infrastructure/store";
 import { useState, useEffect } from "react";
 import { useRunCode, parseCases } from "../hooks/useRunCode";
 import { tsCompiler } from "../infrastructure/tsCompiler";
+import type { ParsedTestCase } from "../domain/TestCase";
 import CodeEditor from "./CodeEditor";
 
 export function EditorPane() {
@@ -19,9 +20,10 @@ export function EditorPane() {
     });
   }, []);
 
-  async function handleRun() {
+  async function handleRun(isSubmit: boolean) {
     if (busy) return;
     setBusy(true);
+    let runnable: ParsedTestCase[] = [];
     try {
       const prob = getProblem(currentSlug)!;
       const st = getProblemState(currentSlug);
@@ -50,7 +52,7 @@ export function EditorPane() {
 
       const cases = getCasesForUI();
       const parsed = parseCases(cases, prob);
-      const runnable = parsed.filter((p) => !p.parseError);
+      runnable = parsed.filter((p) => !p.parseError);
       if (!runnable.length) {
         alert("No valid testcases to run");
         return;
@@ -86,22 +88,77 @@ export function EditorPane() {
       if (total > 0 && passed === total) verdict = "Accepted";
       if (total === 0) verdict = "No Expected Cases";
 
-      useAppStore.getState().addSubmission({
-        t: Date.now(),
-        lang,
-        verdict,
-        passed,
-        total,
-        ms: total > 0 ? ms : null,
-      });
+      if (isSubmit) {
+        useAppStore.getState().addSubmission({
+          t: Date.now(),
+          lang,
+          verdict,
+          passed,
+          total,
+          ms: total > 0 ? ms : null,
+        });
+      }
 
       // save last run details for result view
       setLastRun(currentSlug, { results, logs, verdict, passed, total, ms });
 
-      if (verdict === "Accepted") useAppStore.getState().markSolved();
+      if (isSubmit && verdict === "Accepted") {
+        useAppStore.getState().markSolved();
+      }
     } catch (e: any) {
-      console.error(e);
-      alert("Run failed: " + (e?.type || e?.message || e));
+      if (e?.type === "timeout") {
+        const tleResults: any[] = e.results || [];
+        runnable.forEach((p, i) => {
+          const m = tleResults[i];
+          if (!m || m.tle) {
+            useAppStore.getState().setCaseMark(p.id, "tle");
+          } else {
+            const mark = !m.ok
+              ? "err"
+              : m.pass === null
+                ? "pass"
+                : m.pass
+                  ? "pass"
+                  : "fail";
+            useAppStore.getState().setCaseMark(p.id, mark);
+          }
+        });
+
+        let passed = 0;
+        let total = 0;
+        runnable.forEach((p, i) => {
+          const m = tleResults[i];
+          const hasExp = Object.prototype.hasOwnProperty.call(p, "expected");
+          if (hasExp) {
+            total++;
+            if (m && !m.tle && m.ok && m.pass) passed++;
+          }
+        });
+
+        const verdict = "Time Limit Exceeded";
+        setLastRun(currentSlug, {
+          results: tleResults,
+          logs: e.logs || [],
+          verdict,
+          passed,
+          total,
+          ms: null,
+        });
+
+        if (isSubmit) {
+          useAppStore.getState().addSubmission({
+            t: Date.now(),
+            lang,
+            verdict,
+            passed,
+            total,
+            ms: null,
+          });
+        }
+      } else {
+        console.error(e);
+        alert("Run failed: " + (e?.type || e?.message || e));
+      }
     } finally {
       setBusy(false);
     }
@@ -160,7 +217,7 @@ export function EditorPane() {
         <div className="spacer" />
         <button
           className={`btn btn-run ${busy ? "busy" : ""}`}
-          onClick={() => handleRun()}
+          onClick={() => handleRun(false)}
           disabled={busy}
         >
           <span className="spin" />
@@ -168,7 +225,7 @@ export function EditorPane() {
         </button>
         <button
           className={`btn btn-submit ${busy ? "busy" : ""}`}
-          onClick={() => handleRun()}
+          onClick={() => handleRun(true)}
           disabled={busy}
         >
           <span className="spin" />

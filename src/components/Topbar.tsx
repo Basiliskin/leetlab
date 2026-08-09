@@ -3,7 +3,7 @@ import { PROBLEM_BANK } from "../infrastructure/problemBank";
 
 export function Topbar() {
   const solvedCount = Object.values(
-    useAppStore.getState().problems || {},
+    useAppStore((s) => s.problems) || {},
   ).filter((p) => p.solvedAt).length;
   const tsStatus = useAppStore((s) => s.tsStatus);
 

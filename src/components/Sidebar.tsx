@@ -8,6 +8,7 @@ export function Sidebar() {
   const search = useAppStore((s) => s.search);
   const setFilter = useAppStore((s) => s.setFilter);
   const setSearch = useAppStore((s) => s.setSearch);
+  const problems = useAppStore((s) => s.problems);
 
   const counts = {
     All: PROBLEM_BANK.length,
@@ -57,8 +58,7 @@ export function Sidebar() {
       <ul className="plist">
         {filtered.length ? (
           filtered.map((p, i) => {
-            const solved = !!useAppStore.getState().getProblemState(p.slug)
-              .solvedAt;
+            const solved = !!problems[p.slug]?.solvedAt;
             return (
               <li
                 key={p.slug}

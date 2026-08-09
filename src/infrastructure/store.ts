@@ -32,6 +32,8 @@ interface AppState {
   filter: 'All' | 'Easy' | 'Medium' | 'Hard'
   search: string
   caseMarks: Record<string, string>
+  cursorLine: number
+  cursorCol: number
 
   getProblem: (slug: string) => Problem | undefined
   getProblemState: (slug: string) => ProblemState
@@ -51,6 +53,7 @@ interface AppState {
   markSolved: () => void
   setCaseMark: (caseId: string, mark: string) => void
   resetCaseMarks: () => void
+  setCursorPos: (line: number, col: number) => void
   // last run results per-problem
   lastRuns?: Record<string, any>
   setLastRun: (slug: string, payload: any) => void
@@ -91,6 +94,8 @@ export const useAppStore = create<AppState>()(
       filter: 'All',
       search: '',
       caseMarks: {},
+      cursorLine: 1,
+      cursorCol: 1,
 
       getProblem: (slug) => PROBLEM_BANK.find((p) => p.slug === slug),
 
@@ -209,6 +214,7 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ caseMarks: { ...s.caseMarks, [caseId]: mark } })),
 
       resetCaseMarks: () => set({ caseMarks: {} }),
+      setCursorPos: (line, col) => set({ cursorLine: line, cursorCol: col }),
         // last run results per-problem
         lastRuns: {},
         setLastRun: (slug: string, payload: any) =>

@@ -22,9 +22,30 @@ export function useRunCode() {
         const worker = new SandboxWorker()
         workerRef.current = worker
 
+        let settled = false
+
         const timeout = setTimeout(() => {
           worker.terminate()
-          reject({ type: 'timeout' })
+          if (settled) return
+          settled = true
+          const partial = results.map((r, i) =>
+            r === undefined
+              ? {
+                  type: 'case',
+                  i,
+                  ms: null,
+                  ok: false,
+                  hasExp: Object.prototype.hasOwnProperty.call(
+                    cases[i],
+                    'expected'
+                  ),
+                  pass: null,
+                  tle: true,
+                  logs: [],
+                }
+              : r
+          )
+          reject({ type: 'timeout', results: partial, logs })
         }, 6000)
 
         const results: any[] = new Array(cases.length)
@@ -32,9 +53,11 @@ export function useRunCode() {
 
         worker.onmessage = (e: MessageEvent) => {
           const m = e.data
+          if (settled) return
           if (m.type === 'compile') {
             clearTimeout(timeout)
             worker.terminate()
+            settled = true
             reject({ type: 'compile', error: m.error, logs: m.logs })
           } else if (m.type === 'case') {
             results[m.i] = m
@@ -42,13 +65,16 @@ export function useRunCode() {
           } else if (m.type === 'done') {
             clearTimeout(timeout)
             worker.terminate()
+            settled = true
             resolve({ results, logs })
           }
         }
 
         worker.onerror = (e: ErrorEvent) => {
+          if (settled) return
           clearTimeout(timeout)
           worker.terminate()
+          settled = true
           reject({ type: 'sandbox_error', error: e.message })
         }
 
