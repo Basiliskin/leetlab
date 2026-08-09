@@ -191,24 +191,8 @@
   .ghost-btn:hover{color:var(--ink);border-color:#3a4859;transform:translateY(-1px)}
 
   .editor-body{flex:1;display:flex;min-height:150px;background:var(--panel2);position:relative}
-  .gutter{flex:0 0 52px;background:var(--panel2);border-right:1px solid var(--line-soft);overflow:hidden;position:relative}
-  .gutter .nums{position:absolute;top:0;left:0;right:0;padding:14px 0;text-align:right;font-family:var(--mono);font-size:13px;line-height:1.62;color:#3d4a5a;user-select:none}
-  .gutter .nums div{padding-right:12px;transition:color .15s}
-  .gutter .nums div.cur{color:var(--amber)}
-  .code-area{position:relative;flex:1;overflow:hidden}
-  .code-area pre,.code-area textarea{
-    font-family:var(--mono);font-size:13px;line-height:1.62;padding:14px 16px;white-space:pre;
-    tab-size:2;margin:0;border:none;outline:none;width:100%;height:100%;
-  }
-  .code-area pre{position:absolute;inset:0;overflow:hidden;pointer-events:none;color:#dbe4ee;background:transparent}
-  .code-area textarea{
-    position:absolute;inset:0;resize:none;background:transparent;color:transparent;
-    caret-color:var(--amber2);overflow:auto;white-space:pre;
-  }
-  .code-area textarea::selection{background:rgba(88,196,220,.25)}
-  .tk-kw{color:#ffab24}.tk-str{color:#6fce7f}.tk-num{color:#6cb6ff}
-  .tk-com{color:#5d6b7d;font-style:italic}.tk-lit{color:#ff7b72}
-  .tk-fn{color:#53d6c3}.tk-cls{color:#e8935f}
+  .cm-host{flex:1;min-width:0;position:relative}
+  .cm-host .cm-editor{position:absolute;inset:0;height:100%}
 
   /* ---------- drawer ---------- */
   .drawer{flex:0 0 238px;border-top:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel2)}
