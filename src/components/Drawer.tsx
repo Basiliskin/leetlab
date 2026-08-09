@@ -13,19 +13,32 @@ export function Drawer() {
   const currentSlug = useAppStore((s) => s.currentSlug);
   const caseMarks = useAppStore((s) => s.caseMarks);
   const lastRun = useAppStore((s) => (s.lastRuns || {})[currentSlug] || null);
+  const activeTab = useAppStore((s) => s.activeResultTab);
+  const setActiveTab = useAppStore((s) => s.setActiveResultTab);
 
   return (
     <div className="drawer">
       <div className="pane-tabs">
-        <button className="ptab on" id="tabTest">
+        <button
+          className={`ptab ${activeTab === "test" ? "on" : ""}`}
+          id="tabTest"
+          onClick={() => setActiveTab("test")}
+        >
           Testcases
         </button>
-        <button className="ptab" id="tabResult">
-          Result <span className="badge" hidden></span>
+        <button
+          className={`ptab ${activeTab === "result" ? "on" : ""}`}
+          id="tabResult"
+          onClick={() => setActiveTab("result")}
+        >
+          Result{" "}
+          <span className="badge" hidden={!lastRun}>
+            {lastRun ? `${lastRun.passed}/${lastRun.total}` : ""}
+          </span>
         </button>
       </div>
       <div className="drawer-body">
-        <div className="tc-view">
+        <div className="tc-view" hidden={activeTab !== "test"}>
           <div className="case-pills">
             {cases.map((c, i) => (
               <button
@@ -78,7 +91,7 @@ export function Drawer() {
           </div>
         </div>
 
-        <div className="res-view">
+        <div className="res-view" hidden={activeTab !== "result"}>
           {lastRun ? (
             <>
               {lastRun.compile ? (

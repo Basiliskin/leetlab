@@ -60,6 +60,9 @@ interface AppState {
   // typescript compiler status
   tsStatus?: string
   setTsStatus: (st: string) => void
+  // which tab is active in the testcases/result drawer
+  activeResultTab: 'test' | 'result'
+  setActiveResultTab: (tab: 'test' | 'result') => void
 }
 
 const defaultProblemState = (): ProblemState => ({
@@ -230,6 +233,10 @@ export const useAppStore = create<AppState>()(
         // typescript compiler status
         tsStatus: 'loading',
         setTsStatus: (st: string) => set({ tsStatus: st }),
+
+        // which tab is active in the testcases/result drawer
+        activeResultTab: 'test',
+        setActiveResultTab: (tab) => set({ activeResultTab: tab }),
     }),
     {
       name: 'leetlab.v2',

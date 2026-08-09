@@ -45,6 +45,7 @@ export function EditorPane() {
             total: 0,
             ms: null,
           });
+          useAppStore.getState().setActiveResultTab("result");
           setBusy(false);
           return;
         }
@@ -101,6 +102,7 @@ export function EditorPane() {
 
       // save last run details for result view
       setLastRun(currentSlug, { results, logs, verdict, passed, total, ms });
+      useAppStore.getState().setActiveResultTab("result");
 
       if (isSubmit && verdict === "Accepted") {
         useAppStore.getState().markSolved();
@@ -144,6 +146,7 @@ export function EditorPane() {
           total,
           ms: null,
         });
+        useAppStore.getState().setActiveResultTab("result");
 
         if (isSubmit) {
           useAppStore.getState().addSubmission({
