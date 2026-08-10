@@ -1,20 +1,24 @@
-// Generate-settings modal (Phase 5 of
-// docs/roadmaps/llm-generated-problems-import-export-roadmap.md).
+// Generate-settings modal (Phase 2 of
+// docs/roadmaps/llm-provider-crud-roadmap.md).
 //
-// Topbar 'Generate' entry: pick a provider/model, enter (masked) and persist an
-// API key through the apiKeys module, optionally set a base URL for local
-// OpenAI-compatible servers, then run generation. Classified provider errors
-// are surfaced distinctly (auth vs network/CORS vs server vs validation) and a
-// retry re-runs without resetting the chosen provider/model/key.
+// Topbar 'Generate' entry: pick a provider (from the user-managed provider
+// registry), optionally enter a (masked) API key that persists through the
+// apiKeys module, and run generation. The provider's protocol, base URL, and
+// model name are derived from the registry, not hardcoded; the base URL and
+// model fields are pre-filled from the selected provider and remain editable
+// for this session. Classified provider errors are surfaced distinctly (auth vs
+// network/CORS vs server vs validation) and a retry re-runs without resetting
+// the chosen provider/model/key.
 //
 // On success the validated `Problem` is written ONLY to the store's in-memory
 // `pendingGenerated` slice — nothing reaches localStorage or the problem bank
 // here (the review-before-add gate, Phase 6, owns acceptance).
 
 import { useEffect, useRef, useState } from 'react'
-import { clearKey, getKey, redact, setKey, type ApiProvider } from '../infrastructure/apiKeys'
+import { clearKey, getKey, redact, setKey } from '../infrastructure/apiKeys'
 import { generateValidatedProblem, GenerationValidationError } from '../infrastructure/outputValidation'
-import { PROVIDERS, ProviderError } from '../infrastructure/providerAdapters'
+import { ProviderError } from '../infrastructure/providerAdapters'
+import { listProviders } from '../infrastructure/providerRegistry'
 import { buildGenerationPrompt } from '../infrastructure/generationPrompt'
 import {
   describeDuplicate,
@@ -59,10 +63,14 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const acceptGeneratedProblem = useAppStore((s) => s.acceptGeneratedProblem)
   const discardGeneratedProblem = useAppStore((s) => s.discardGeneratedProblem)
 
-  const [provider, setProvider] = useState<ApiProvider>('anthropic')
-  const [model, setModel] = useState(() => PROVIDERS[0].models[0].id)
-  const [baseUrl, setBaseUrl] = useState(
-    () => PROVIDERS.find((p) => p.id === 'local')!.defaultBaseUrl
+  const [provider, setProvider] = useState<string>(
+    () => listProviders()[0]?.id ?? ''
+  )
+  const [model, setModel] = useState<string>(
+    () => listProviders()[0]?.modelName ?? ''
+  )
+  const [baseUrl, setBaseUrl] = useState<string>(
+    () => listProviders()[0]?.baseUrl ?? ''
   )
   const [keyInput, setKeyInput] = useState('')
   const [inFlight, setInFlight] = useState(false)
@@ -117,18 +125,59 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
 
   if (!open) return null
 
-  const cfg = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0]
-  const storedKey = getKey(provider)
-  const keyRequired = provider !== 'local'
+  // Registry-derived selection. The registry is read lazily per render (like
+  // apiKeys); `selected` falls back to the first remaining provider when the
+  // current id was deleted, and to null when the registry is empty (the form is
+  // replaced by an empty state below).
+  const providers = listProviders()
+  const selected = providers.find((p) => p.id === provider) ?? providers[0] ?? null
+  const storedKey = getKey(selected?.id ?? '')
+
+  // Empty registry: there is nothing to generate with. No provider is
+  // special-cased, so this is the defensive empty state (the CRUD surface in
+  // Phase 3 is where a user would re-add a provider).
+  if (!selected) {
+    return (
+      <div
+        className="modal-overlay"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+      >
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="gen-modal-title"
+        >
+          <div className="modal-head">
+            <div>
+              <h2 id="gen-modal-title">Generate a problem</h2>
+              <p className="modal-sub">No LLM providers are configured.</p>
+            </div>
+            <button type="button" className="modal-x" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
+          <div className="gen-empty" role="status">
+            Add an LLM provider to start generating problems.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Review-gate view state: a pending problem awaiting review, a confirmation
   // for the problem just accepted (queue already cleared), or the form.
   const showReview = pendingGenerated !== null
   const showAccepted = acceptedSnapshot !== null
 
-  const onProviderChange = (id: ApiProvider) => {
-    const next = PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]
+  const onProviderChange = (id: string) => {
+    const next = providers.find((p) => p.id === id)
+    if (!next) return
     setProvider(id)
-    setModel(next.models[0]?.id ?? '')
+    setModel(next.modelName)
+    setBaseUrl(next.baseUrl)
     setError(null)
   }
 
@@ -165,9 +214,10 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   }
 
   const runGeneration = async () => {
-    if (inFlightRef.current) return
-    if (provider === 'local' && !model.trim()) {
-      setError('Enter a model name for the local server.')
+    if (inFlightRef.current || !selected) return
+    const effectiveModel = model.trim() || selected.modelName
+    if (!effectiveModel.trim()) {
+      setError('Enter a model name.')
       return
     }
     inFlightRef.current = true
@@ -176,14 +226,14 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
     try {
       const key = keyInput.trim()
       // Persist the key through the apiKeys module; an empty field removes it.
-      if (key) setKey(provider, key)
-      else clearKey(provider)
+      if (key) setKey(selected.id, key)
+      else clearKey(selected.id)
       const problem = await generateValidatedProblem({
-        provider,
+        provider: selected.id,
         apiKey: key,
-        baseUrl:
-          provider === 'local' && baseUrl.trim() ? baseUrl.trim() : undefined,
-        model: model.trim() || cfg.models[0]?.id || '',
+        protocol: selected.protocol,
+        baseUrl: baseUrl.trim() || selected.baseUrl,
+        model: effectiveModel,
         prompt: buildGenerationPrompt(),
       })
       // The only write on success: the in-memory pending slice. The view
@@ -346,62 +396,50 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
               <label htmlFor="gen-provider">Provider</label>
               <select
                 id="gen-provider"
-                value={provider}
-                onChange={(e) => onProviderChange(e.target.value as ApiProvider)}
+                value={selected.id}
+                onChange={(e) => onProviderChange(e.target.value)}
                 disabled={inFlight}
               >
-                {PROVIDERS.map((p) => (
+                {providers.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label}
+                    {p.name}
                   </option>
                 ))}
               </select>
             </div>
 
             <div className="form-row">
-              <label htmlFor="gen-model">
-                {cfg.models.length > 0 ? 'Model' : 'Model name'}
-              </label>
-              {cfg.models.length > 0 ? (
-                <select
-                  id="gen-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  disabled={inFlight}
-                >
-                  {cfg.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  id="gen-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={cfg.modelPlaceholder}
-                  disabled={inFlight}
-                />
-              )}
+              <label htmlFor="gen-model">Model name</label>
+              <input
+                id="gen-model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. claude-opus-5, gpt-5.4, llama3.1"
+                disabled={inFlight}
+              />
+              <div className="field-hint">
+                Pre-filled from the provider definition; editable for this
+                session.
+              </div>
             </div>
 
-            {provider === 'local' && (
-              <div className="form-row">
-                <label htmlFor="gen-baseurl">Base URL</label>
-                <input
-                  id="gen-baseurl"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="http://localhost:11434"
-                  disabled={inFlight}
-                />
-                <div className="field-hint">
-                  The adapter appends /v1/chat/completions. The server must
-                  allow browser (CORS) requests.
-                </div>
+            <div className="form-row">
+              <label htmlFor="gen-baseurl">Base URL</label>
+              <input
+                id="gen-baseurl"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={selected.baseUrl}
+                disabled={inFlight}
+              />
+              <div className="field-hint">
+                The adapter appends{' '}
+                {selected.protocol === 'anthropic'
+                  ? '/v1/messages'
+                  : '/v1/chat/completions'}
+                . The server must allow browser (CORS) requests.
               </div>
-            )}
+            </div>
 
             <div className="form-row">
               <label htmlFor="gen-key">API key</label>
@@ -410,7 +448,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
                 type="password"
                 value={keyInput}
                 onChange={(e) => setKeyInput(e.target.value)}
-                placeholder={keyRequired ? 'sk-…' : 'optional for local servers'}
+                placeholder="sk-… (optional)"
                 autoComplete="off"
                 disabled={inFlight}
               />
@@ -439,7 +477,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
               <button
                 type="submit"
                 className={`btn btn-submit${inFlight ? ' busy' : ''}`}
-                disabled={inFlight || (keyRequired && !keyInput.trim())}
+                disabled={inFlight}
               >
                 <span className="spin" />
                 {inFlight

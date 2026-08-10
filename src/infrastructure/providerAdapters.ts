@@ -6,28 +6,29 @@
 // callers get a uniform `generateProblemText` contract and a classified error
 // result (`ProviderError.category`) they can switch on without string matching.
 //
-// Phase 1 of docs/roadmaps/llm-generated-problems-import-export-roadmap.md.
+// Phase 2 of docs/roadmaps/llm-provider-crud-roadmap.md: dispatch keys off the
+// provider's wire *protocol* (`anthropic` → `/v1/messages`, `openai` →
+// `/v1/chat/completions`), never off a hardcoded provider id, so a user-added
+// provider of either protocol works. The origin comes in as `baseUrl` (from the
+// provider registry) and the adapter appends the protocol-specific path.
 // Problem parsing is intentionally out of scope here — this returns raw text
 // only.
 //
 // Key sourcing: the API key is passed per call (never captured at module scope
-// and never read from localStorage here). The generate-settings UI (Phase 5)
-// sources it via `getKey` from `./apiKeys` and hands it in.
+// and never read from localStorage here). The generate-settings UI sources it
+// via `getKey` from `./apiKeys` and hands it in.
 
-import type { ApiProvider } from './apiKeys'
-
-export type ProviderId = ApiProvider
+import type { ProviderProtocol } from './providerRegistry'
 
 export interface GenerateProblemTextOptions {
-  provider: ProviderId
+  /** Provider id — for error attribution only (e.g. `opencode`, `minimax`). */
+  provider: string
   /** API key for the provider. Required per call — never captured at module scope. */
   apiKey: string
-  /**
-   * Override the provider's default origin. For `local` this is the origin of
-   * an OpenAI-compatible server (e.g. `http://localhost:11434` for Ollama); the
-   * adapter appends `/v1/chat/completions`.
-   */
-  baseUrl?: string
+  /** Wire-format selector: `anthropic` → `/v1/messages`, `openai` → `/v1/chat/completions`. */
+  protocol: ProviderProtocol
+  /** Origin of the provider API; the adapter appends the protocol-specific path. */
+  baseUrl: string
   model: string
   prompt: string
 }
@@ -43,13 +44,13 @@ export type ProviderErrorCategory =
 
 export interface ProviderErrorInit {
   status: number | null
-  provider: ProviderId
+  provider: string
 }
 
 export class ProviderError extends Error {
   readonly category: ProviderErrorCategory
   readonly status: number | null
-  readonly provider: ProviderId
+  readonly provider: string
 
   constructor(
     category: ProviderErrorCategory,
@@ -64,69 +65,11 @@ export class ProviderError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Provider/model catalog (for the settings picker)
-// ---------------------------------------------------------------------------
-
-// Origins are the single source of truth; the per-provider path is appended by
-// the adapters below (`/v1/messages` for Anthropic, `/v1/chat/completions`
-// otherwise).
-const DEFAULT_BASE_URLS: Record<ProviderId, string> = {
-  anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com',
-  local: 'http://localhost:11434', // Ollama's OpenAI-compatible endpoint
-}
-
 // Required on every Anthropic Messages request; the browser-direct CORS header
 // is mandatory for calls made from a web page with a user-supplied key.
 const ANTHROPIC_VERSION_HEADER = '2023-06-01'
 
 const MAX_OUTPUT_TOKENS = 8192
-
-export interface ModelOption {
-  id: string
-  label: string
-}
-
-export interface ProviderConfig {
-  id: ProviderId
-  label: string
-  defaultBaseUrl: string
-  /** Current, non-deprecated model IDs shown in the provider/model picker. */
-  models: readonly ModelOption[]
-  /** Placeholder when the model field is free-form (local servers). */
-  modelPlaceholder?: string
-}
-
-export const PROVIDERS: readonly ProviderConfig[] = [
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    defaultBaseUrl: DEFAULT_BASE_URLS.anthropic,
-    models: [
-      { id: 'claude-opus-5', label: 'Claude Opus 5' },
-      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-    ],
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    defaultBaseUrl: DEFAULT_BASE_URLS.openai,
-    models: [
-      { id: 'gpt-5.4', label: 'GPT-5.4' },
-      { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini' },
-      { id: 'gpt-5.4-nano', label: 'GPT-5.4 nano' },
-    ],
-  },
-  {
-    id: 'local',
-    label: 'Local (OpenAI-compatible)',
-    defaultBaseUrl: DEFAULT_BASE_URLS.local,
-    models: [], // model names are server-specific — free-form input
-    modelPlaceholder: 'e.g. llama3.1, qwen2.5-coder, gemma3',
-  },
-]
 
 // ---------------------------------------------------------------------------
 // Error classification
@@ -148,7 +91,7 @@ export function classifyFetchError(err: unknown): ProviderErrorCategory {
   return 'unknown'
 }
 
-function toProviderError(provider: ProviderId, err: unknown): ProviderError {
+function toProviderError(provider: string, err: unknown): ProviderError {
   if (err instanceof ProviderError) return err
   const message = err instanceof Error ? err.message : String(err)
   return new ProviderError(classifyFetchError(err), message, {
@@ -172,7 +115,7 @@ function extractErrorMessage(data: unknown): string | undefined {
   return typeof data.error.message === 'string' ? data.error.message : undefined
 }
 
-async function httpError(response: Response, provider: ProviderId): Promise<ProviderError> {
+async function httpError(response: Response, provider: string): Promise<ProviderError> {
   const status = response.status
   let message = response.statusText || `HTTP ${status}`
   try {
@@ -195,15 +138,15 @@ function extractAnthropicText(data: unknown): string | undefined {
   return undefined
 }
 
-async function parseAnthropicResponse(response: Response): Promise<string> {
-  if (!response.ok) throw await httpError(response, 'anthropic')
+async function parseAnthropicResponse(response: Response, provider: string): Promise<string> {
+  if (!response.ok) throw await httpError(response, provider)
   let data: unknown
   try {
     data = await response.json()
   } catch {
     throw new ProviderError('invalid-response', 'Response body is not valid JSON', {
       status: response.status,
-      provider: 'anthropic',
+      provider,
     })
   }
   const text = extractAnthropicText(data)
@@ -211,7 +154,7 @@ async function parseAnthropicResponse(response: Response): Promise<string> {
   throw new ProviderError(
     'invalid-response',
     'Response did not contain a non-empty text block (content[].text)',
-    { status: response.status, provider: 'anthropic' },
+    { status: response.status, provider },
   )
 }
 
@@ -224,10 +167,7 @@ function extractOpenAiContent(data: unknown): unknown {
   return message.content
 }
 
-async function parseOpenAiResponse(
-  response: Response,
-  provider: 'openai' | 'local',
-): Promise<string> {
+async function parseOpenAiResponse(response: Response, provider: string): Promise<string> {
   if (!response.ok) throw await httpError(response, provider)
   let data: unknown
   try {
@@ -248,11 +188,10 @@ async function parseOpenAiResponse(
 }
 
 // ---------------------------------------------------------------------------
-// Per-provider adapters
+// Protocol adapters
 // ---------------------------------------------------------------------------
 
 async function generateAnthropic(options: GenerateProblemTextOptions): Promise<string> {
-  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URLS.anthropic
   const body = {
     model: options.model,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -260,7 +199,7 @@ async function generateAnthropic(options: GenerateProblemTextOptions): Promise<s
   }
   let response: Response
   try {
-    response = await fetch(`${baseUrl}/v1/messages`, {
+    response = await fetch(`${options.baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -272,16 +211,12 @@ async function generateAnthropic(options: GenerateProblemTextOptions): Promise<s
       body: JSON.stringify(body),
     })
   } catch (err) {
-    throw toProviderError('anthropic', err)
+    throw toProviderError(options.provider, err)
   }
-  return parseAnthropicResponse(response)
+  return parseAnthropicResponse(response, options.provider)
 }
 
-async function generateOpenAiCompatible(
-  options: GenerateProblemTextOptions,
-  provider: 'openai' | 'local',
-): Promise<string> {
-  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URLS[provider]
+async function generateOpenAiCompatible(options: GenerateProblemTextOptions): Promise<string> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   // Local servers commonly accept an empty key; only attach the header when a
   // key was actually supplied.
@@ -292,31 +227,30 @@ async function generateOpenAiCompatible(
   }
   let response: Response
   try {
-    response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    response = await fetch(`${options.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
     })
   } catch (err) {
-    throw toProviderError(provider, err)
+    throw toProviderError(options.provider, err)
   }
-  return parseOpenAiResponse(response, provider)
+  return parseOpenAiResponse(response, options.provider)
 }
 
 /**
  * Generate problem text from the selected provider and return the model's raw
- * text. Throws {@link ProviderError} on any failure; call sites switch on
- * `error.category`, never on message text.
+ * text. Dispatches on the provider's wire protocol — a user-added provider of
+ * either protocol reaches the right endpoint. Throws {@link ProviderError} on
+ * any failure; call sites switch on `error.category`, never on message text.
  */
 export async function generateProblemText(
   options: GenerateProblemTextOptions,
 ): Promise<string> {
-  switch (options.provider) {
+  switch (options.protocol) {
     case 'anthropic':
       return generateAnthropic(options)
     case 'openai':
-      return generateOpenAiCompatible(options, 'openai')
-    case 'local':
-      return generateOpenAiCompatible(options, 'local')
+      return generateOpenAiCompatible(options)
   }
 }

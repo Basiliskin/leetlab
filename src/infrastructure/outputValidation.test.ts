@@ -427,6 +427,8 @@ describe('generateValidatedProblem (bounded re-prompt)', () => {
   const options = {
     provider: 'openai' as const,
     apiKey: 'test-key',
+    protocol: 'openai' as const,
+    baseUrl: 'https://api.openai.com',
     model: 'gpt-test',
     prompt: 'Generate a problem as JSON',
   }

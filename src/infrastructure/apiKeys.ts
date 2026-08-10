@@ -11,11 +11,8 @@
 // Keys are keyed by provider id. The id is an arbitrary string — the built-in
 // Anthropic/OpenAI/local ids plus any user-added provider (see the provider
 // CRUD roadmap). Storage has always been `Record<string, string>` at runtime,
-// so widening from the closed union is a pure type-level change; `ApiProvider`
-// stays as an alias for the built-in ids until the generate path dispatches on
-// protocol instead of provider id.
-
-export type ApiProvider = 'anthropic' | 'openai' | 'local'
+// and the generate path dispatches on protocol instead of provider id, so there
+// is no closed union of provider ids to maintain here.
 
 // The one storage key holding all provider key state. Every read/write below
 // operates exclusively on this constant.

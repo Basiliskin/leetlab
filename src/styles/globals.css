@@ -384,6 +384,10 @@
     border:1px solid rgba(88,196,220,.35);background:rgba(88,196,220,.07);border-radius:8px;
     padding:10px 13px;font-size:12.5px;color:#a8d9e6;line-height:1.55;
   }
+  .gen-empty{
+    border:1px dashed var(--line);border-radius:8px;padding:16px;text-align:center;
+    font-size:12.5px;color:var(--dim);line-height:1.55;
+  }
   /* ---------- review-before-add gate (Phase 6) ---------- */
   .gen-tests{border:1px solid var(--line);border-radius:8px;background:var(--inset);padding:10px 12px;margin-bottom:14px}
   .gen-tests-label{

@@ -50,10 +50,11 @@ export type DeleteProviderResult = { ok: true } | { ok: false; error: 'not-found
 // The one storage key holding all provider definitions.
 const STORAGE_KEY = 'leetlab.providers'
 
-// Initial definitions, mirroring the pre-registry constants in
-// providerAdapters.ts (`DEFAULT_BASE_URLS` / `PROVIDERS`), collapsed to a single
-// modelName. `local` speaks the openai-compatible wire protocol. These are
-// written once on first use and afterwards behave like any user-managed row.
+// Initial definitions, mirroring the pre-registry constants that used to live
+// in providerAdapters.ts (`DEFAULT_BASE_URLS` / `PROVIDERS`, removed in Phase 2),
+// collapsed to a single modelName. `local` speaks the openai-compatible wire
+// protocol. These are written once on first use and afterwards behave like any
+// user-managed row.
 const SEED_PROVIDERS: readonly ProviderDefinition[] = [
   {
     id: 'anthropic',
