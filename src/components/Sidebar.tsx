@@ -5,8 +5,10 @@ export function Sidebar() {
   const selectProblem = useAppStore((s) => s.selectProblem);
   const currentSlug = useAppStore((s) => s.currentSlug);
   const filter = useAppStore((s) => s.filter);
+  const status = useAppStore((s) => s.status);
   const search = useAppStore((s) => s.search);
   const setFilter = useAppStore((s) => s.setFilter);
+  const setStatus = useAppStore((s) => s.setStatus);
   const setSearch = useAppStore((s) => s.setSearch);
   const problems = useAppStore((s) => s.problems);
 
@@ -20,14 +22,25 @@ export function Sidebar() {
     (p) => (counts[p.difficulty] = (counts[p.difficulty] || 0) + 1),
   );
 
+  const doneCount = PROBLEM_BANK.filter((p) => !!problems[p.slug]?.solvedAt)
+    .length;
+  const statusCounts = {
+    All: PROBLEM_BANK.length,
+    Done: doneCount,
+    Undone: PROBLEM_BANK.length - doneCount,
+  } as Record<string, number>;
+
   const filtered = PROBLEM_BANK.filter((p) => {
     const okFilter = filter === "All" || p.difficulty === filter;
+    const solved = !!problems[p.slug]?.solvedAt;
+    const okStatus =
+      status === "All" || (status === "Done" ? solved : !solved);
     const okSearch =
       !search ||
       (p.title + " " + p.tags.join(" "))
         .toLowerCase()
         .includes(search.toLowerCase());
-    return okFilter && okSearch;
+    return okFilter && okStatus && okSearch;
   });
 
   return (
@@ -50,6 +63,18 @@ export function Sidebar() {
               data-f={k}
             >
               {k} · {counts[k]}
+            </button>
+          ))}
+        </div>
+        <div className="chips">
+          {Object.keys(statusCounts).map((k) => (
+            <button
+              key={k}
+              className={`chip ${status === k ? "on" : ""}`}
+              onClick={() => setStatus(k as any)}
+              data-f={k}
+            >
+              {k} · {statusCounts[k]}
             </button>
           ))}
         </div>

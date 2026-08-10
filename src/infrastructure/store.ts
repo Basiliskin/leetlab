@@ -30,6 +30,7 @@ interface AppState {
   currentSlug: string
   selectedCaseIdx: number
   filter: 'All' | 'Easy' | 'Medium' | 'Hard'
+  status: 'All' | 'Done' | 'Undone'
   search: string
   caseMarks: Record<string, string>
   cursorLine: number
@@ -41,6 +42,7 @@ interface AppState {
   setLang: (lang: 'js' | 'ts') => void
   selectProblem: (slug: string) => void
   setFilter: (filter: AppState['filter']) => void
+  setStatus: (status: AppState['status']) => void
   setSearch: (search: string) => void
   setSplit: (split: number) => void
   selectCase: (idx: number) => void
@@ -102,6 +104,7 @@ export const useAppStore = create<AppState>()(
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
       filter: 'All',
+      status: 'All',
       search: '',
       caseMarks: {},
       cursorLine: 1,
@@ -139,6 +142,7 @@ export const useAppStore = create<AppState>()(
         }),
 
       setFilter: (filter) => set({ filter }),
+      setStatus: (status) => set({ status }),
       setSearch: (search) => set({ search }),
       setSplit: (split) => set({ split }),
       selectCase: (idx) => set({ selectedCaseIdx: idx }),
