@@ -8,10 +8,11 @@ leetlab is a LeetCode-style practice app: pick a problem, write JS/TS in an in-b
 npm run dev      # Vite dev server with HMR
 npm run build    # tsc -b && vite build (typecheck happens here)
 npm run lint     # eslint . (flat config)
+npm test         # vitest run (unit tests live next to sources as *.test.ts)
 npm run preview  # preview the built app
 ```
 
-- There is **no test suite and no test runner** installed. Don't invent test commands.
+- Unit tests run under **vitest** (added for the LLM-generation roadmap, Phase 3). Currently only `src/infrastructure/outputValidation.test.ts` exists; tests live next to their source. `npm test` is `vitest run`.
 - There is no CI config in the repo.
 - `npm run build` is the de-facto typecheck gate (`tsc -b` with `strict: true`, `noUnusedLocals`, `noUnusedParameters`). Run it before considering changes done.
 
