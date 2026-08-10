@@ -1,4 +1,5 @@
 import { useAppStore } from "../infrastructure/store";
+import type { LastRunCase } from "../infrastructure/store";
 
 export function Drawer() {
   const cases = useAppStore((s) => s.getCases());
@@ -124,7 +125,7 @@ export function Drawer() {
                 </span>
               </div>
               <div id="resRows">
-                {(lastRun.results || []).map((m: any, idx: number) => {
+                {(lastRun.results || []).map((m: LastRunCase | undefined, idx: number) => {
                   const parsed = cases[idx] || {};
                   const mark = caseMarks[parsed.id] || "";
                   return (
@@ -193,7 +194,7 @@ export function Drawer() {
                     console output · {lastRun.logs.length} line
                     {lastRun.logs.length > 1 ? "s" : ""}
                   </div>
-                  {lastRun.logs.map((l: any, i: number) => (
+                  {lastRun.logs.map((l, i: number) => (
                     <div key={i} className={`cl ${l.l === "log" ? "" : l.l}`}>
                       {l.t}
                     </div>
@@ -215,7 +216,7 @@ export function Drawer() {
                 console output · {lastRun.logs.length} line
                 {lastRun.logs.length > 1 ? "s" : ""}
               </div>
-              {lastRun.logs.map((l: any, i: number) => (
+              {lastRun.logs.map((l, i: number) => (
                 <div key={i} className={`cl ${l.l === "log" ? "" : l.l}`}>
                   {l.t}
                 </div>

@@ -56,12 +56,12 @@ export interface TsDiag {
   message: string
 }
 
-let service: any = null
+let service: import('typescript').LanguageService | null = null
 let version = 0
 let currentCode = ""
 let chain: Promise<TsDiag[]> = Promise.resolve([])
 
-function makeHost(ts: any) {
+function makeHost(ts: typeof import('typescript')) {
   return {
     getCompilationSettings: () => ({
       strict: true,
@@ -97,23 +97,12 @@ function makeHost(ts: any) {
   }
 }
 
-function lineStartsOf(text: string): number[] {
-  const starts = [0]
-  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1)
-  return starts
-}
-
-export function checkCode(code: string, ts: any): Promise<TsDiag[]> {
+export function checkCode(code: string, ts: typeof import('typescript')): Promise<TsDiag[]> {
   const run = async (): Promise<TsDiag[]> => {
     version++
     currentCode = code
     await ensureLibs(["lib.es2021.d.ts", "lib.dom.d.ts"])
     if (!service) service = ts.createLanguageService(makeHost(ts))
-    const starts = lineStartsOf(code)
-    const toOffset = (pos: { line: number; character: number }) => {
-      const lineStart = starts[pos.line] ?? code.length
-      return Math.min(code.length, lineStart + pos.character)
-    }
     const all = [
       ...service.getSyntacticDiagnostics("input.ts"),
       ...service.getSemanticDiagnostics("input.ts"),
@@ -121,11 +110,8 @@ export function checkCode(code: string, ts: any): Promise<TsDiag[]> {
     const out: TsDiag[] = []
     for (const d of all) {
       if (d.start === undefined || d.length === 0) continue
-      const from =
-        typeof d.start === "number"
-          ? Math.min(code.length, d.start)
-          : toOffset(d.start)
-      const to = Math.min(code.length, from + d.length)
+      const from = Math.min(code.length, d.start)
+      const to = Math.min(code.length, from + (d.length ?? 1))
       if (from >= to) continue
       out.push({
         from,

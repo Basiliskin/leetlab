@@ -1,10 +1,15 @@
-import { stripTypes } from "./stripTypes"
+import type * as TS from 'typescript'
+import { stripTypes } from './stripTypes'
+
+// The runtime TypeScript namespace is loaded from the CDN into window.ts; the
+// local `typescript` package only provides types (import type is erased).
+type TsGlobal = { ts?: typeof TS }
 
 export class TypeScriptCompiler {
   ready = false
 
   async load() {
-    if (this.ready || (window as any).ts) {
+    if (this.ready || (window as unknown as TsGlobal).ts) {
       this.ready = true
       return
     }
@@ -25,14 +30,17 @@ export class TypeScriptCompiler {
 
   compile(src: string) {
     // if typescript loaded use transpileModule, else fallback to stripping types
-    const ts = (window as any).ts
+    const ts = (window as unknown as TsGlobal).ts
     if (ts && typeof ts.transpileModule === 'function') {
       try {
         return ts.transpileModule(src, {
           compilerOptions: { target: ts.ScriptTarget.ES2021, module: ts.ModuleKind.CommonJS },
         }).outputText
-      } catch (e: any) {
-        throw new Error(`TS Error: ${e.message}`)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        const err = new Error(`TS Error: ${msg}`) as Error & { cause?: unknown }
+        err.cause = e
+        throw err
       }
     }
     return stripTypes(src)

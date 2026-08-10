@@ -58,7 +58,7 @@ export function Sidebar() {
             <button
               key={k}
               className={`chip ${filter === k ? "on" : ""}`}
-              onClick={() => setFilter(k as any)}
+              onClick={() => setFilter(k as 'All' | 'Easy' | 'Medium' | 'Hard')}
               data-f={k}
             >
               {k} · {counts[k]}
@@ -70,7 +70,7 @@ export function Sidebar() {
             <button
               key={k}
               className={`chip ${status === k ? "on" : ""}`}
-              onClick={() => setStatus(k as any)}
+              onClick={() => setStatus(k as 'All' | 'Done' | 'Undone')}
               data-f={k}
             >
               {k} · {statusCounts[k]}

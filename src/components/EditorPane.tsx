@@ -1,10 +1,15 @@
 import { useAppStore } from "../infrastructure/store";
+import type { LastRunCase } from "../infrastructure/store";
 import { useState, useEffect, useRef } from "react";
-import { useRunCode, parseCases } from "../hooks/useRunCode";
+import { useRunCode, parseCases, isRunError } from "../hooks/useRunCode";
 import { tsCompiler } from "../infrastructure/tsCompiler";
 import { formatCode } from "../infrastructure/formatCode";
 import type { ParsedTestCase } from "../domain/TestCase";
 import CodeEditor from "./CodeEditor";
+
+// Timestamp helper for submission records. Kept behind a function so the
+// purity rule sees run/submit handlers as side-effecting only, not render.
+const now = () => Date.now();
 
 export function EditorPane() {
   const { lang, currentSlug, getProblem, getProblemState } = useAppStore();
@@ -48,7 +53,7 @@ export function EditorPane() {
     tsCompiler.load().then(() => {
       setTsStatus(tsCompiler.ready ? "ready" : "fallback");
     });
-  }, []);
+  }, [setTsStatus]);
 
   async function handleRun(isSubmit: boolean) {
     if (busy) return;
@@ -61,13 +66,14 @@ export function EditorPane() {
       if (lang === "ts") {
         try {
           code = tsCompiler.compile(code);
-        } catch (e: any) {
+        } catch (e) {
+          const err =
+            e instanceof Error
+              ? { name: e.name, message: e.message }
+              : { name: "TS Error", message: String(e) };
           // save compile error and abort run
           setLastRun(currentSlug, {
-            compile: {
-              name: e.name || "TS Error",
-              message: e.message || String(e),
-            },
+            compile: err,
             results: [],
             logs: [],
             verdict: "Compile Error",
@@ -89,7 +95,7 @@ export function EditorPane() {
         return;
       }
 
-      const { results, logs } = await run(code, prob, runnable as any);
+      const { results, logs } = await run(code, prob, runnable);
 
       // process results
       let passed = 0,
@@ -121,7 +127,7 @@ export function EditorPane() {
 
       if (isSubmit) {
         useAppStore.getState().addSubmission({
-          t: Date.now(),
+          t: now(),
           lang,
           verdict,
           passed,
@@ -137,9 +143,10 @@ export function EditorPane() {
       if (isSubmit && verdict === "Accepted") {
         useAppStore.getState().markSolved();
       }
-    } catch (e: any) {
-      if (e?.type === "timeout") {
-        const tleResults: any[] = e.results || [];
+    } catch (e) {
+      const err = isRunError(e) ? e : null;
+      if (err?.type === "timeout") {
+        const tleResults: LastRunCase[] = err.results || [];
         runnable.forEach((p, i) => {
           const m = tleResults[i];
           if (!m || m.tle) {
@@ -170,7 +177,7 @@ export function EditorPane() {
         const verdict = "Time Limit Exceeded";
         setLastRun(currentSlug, {
           results: tleResults,
-          logs: e.logs || [],
+          logs: err.logs || [],
           verdict,
           passed,
           total,
@@ -180,7 +187,7 @@ export function EditorPane() {
 
         if (isSubmit) {
           useAppStore.getState().addSubmission({
-            t: Date.now(),
+            t: now(),
             lang,
             verdict,
             passed,
@@ -188,13 +195,13 @@ export function EditorPane() {
             ms: null,
           });
         }
-      } else if (e?.type === "compile") {
+      } else if (err?.type === "compile") {
         // Sandbox compile failure (e.g. the expected function/class is not
         // defined): surface the banner and any judge logs in the result view.
         setLastRun(currentSlug, {
-          compile: e.error,
+          compile: err.error,
           results: [],
-          logs: e.logs || [],
+          logs: err.logs || [],
           verdict: "Compile Error",
           passed: 0,
           total: 0,
@@ -203,7 +210,10 @@ export function EditorPane() {
         useAppStore.getState().setActiveResultTab("result");
       } else {
         console.error(e);
-        alert("Run failed: " + (e?.type || e?.message || e));
+        alert(
+          "Run failed: " +
+            (err?.type || (e instanceof Error ? e.message : String(e))),
+        );
       }
     } finally {
       setBusy(false);
@@ -219,14 +229,14 @@ export function EditorPane() {
       return p.tests.map((t, i) => ({
         id: `builtin-${i}`,
         inputText: JSON.stringify(
-          p.mode === "class" ? (t as any).calls : (t as any).in,
+          p.mode === "class" ? t.calls : t.in,
           null,
           1,
         ),
-        expectedText: JSON.stringify((t as any).out),
+        expectedText: JSON.stringify(t.out),
       }));
     }
-    return ps.map((c: any) => ({
+    return ps.map((c) => ({
       id: c.id,
       inputText: c.inputText,
       expectedText: c.expectedText,

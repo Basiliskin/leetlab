@@ -1,11 +1,48 @@
 import { useCallback, useRef } from 'react'
 import type { ParsedTestCase } from '@domain/TestCase'
 import type { Problem } from '@domain/Problem'
-// @ts-ignore - Vite worker import
+import type { LastRunCase } from '@infra/store'
 import SandboxWorker from '@infra/sandbox.worker?worker'
 
+export type RunError =
+  | {
+      type: 'timeout'
+      results: LastRunCase[]
+      logs: Array<{ l: string; t: string }>
+    }
+  | {
+      type: 'compile'
+      error: { name: string; message: string }
+      logs: Array<{ l: string; t: string }>
+    }
+  | { type: 'sandbox_error'; error: string }
+
+type WorkerMsg =
+  | {
+      type: 'compile'
+      error: { name: string; message: string }
+      logs: Array<{ l: string; t: string }>
+    }
+  | { type: 'console'; level: string; args: unknown[] }
+  | {
+      type: 'case'
+      i: number
+      ms: number | null
+      ok: boolean
+      hasExp: boolean
+      pass: boolean | null
+      output?: string
+      error?: { name: string; message: string }
+      logs?: Array<{ l: string; t: string }>
+    }
+  | { type: 'done' }
+
+export function isRunError(e: unknown): e is RunError {
+  return typeof e === 'object' && e !== null && 'type' in e
+}
+
 interface RunResult {
-  results: any[]
+  results: LastRunCase[]
   logs: Array<{ l: string; t: string }>
 }
 
@@ -48,10 +85,10 @@ export function useRunCode() {
           reject({ type: 'timeout', results: partial, logs })
         }, 6000)
 
-        const results: any[] = new Array(cases.length)
+        const results: LastRunCase[] = new Array(cases.length)
         const logs: Array<{ l: string; t: string }> = []
 
-        worker.onmessage = (e: MessageEvent) => {
+        worker.onmessage = (e: MessageEvent<WorkerMsg>) => {
           const m = e.data
           if (settled) return
           if (m.type === 'compile') {
@@ -60,8 +97,12 @@ export function useRunCode() {
             settled = true
             reject({ type: 'compile', error: m.error, logs: m.logs })
           } else if (m.type === 'console') {
-            const fn = (console as any)[m.level] ?? console.log
-            fn.apply(console, m.args)
+            const c = console as unknown as Record<
+              string,
+              (...args: unknown[]) => void
+            >
+            const fn = c[m.level] ?? c.log
+            fn(...m.args)
           } else if (m.type === 'case') {
             results[m.i] = m
             if (m.logs) logs.push(...m.logs)
@@ -82,7 +123,7 @@ export function useRunCode() {
         }
 
         const payload = cases.map((c) => {
-          const out: any = {}
+          const out: Record<string, unknown> = {}
           if (problem.mode === 'class') out.calls = c.calls
           else out.input = c.input
           if ('expected' in c) out.expected = c.expected
@@ -119,8 +160,8 @@ export function parseCases(
       if (!Array.isArray(j)) throw new Error('Input must be a JSON array')
       if (problem.mode === 'class') out.calls = j
       else out.input = j
-    } catch (e: any) {
-      out.parseError = `Input: ${e.message}`
+    } catch (e) {
+      out.parseError = `Input: ${e instanceof Error ? e.message : String(e)}`
       return out
     }
     if (c.expectedText.trim() !== '') {

@@ -33,7 +33,8 @@ function deepEq(a: unknown, b: unknown): boolean {
   for (let i = 0; i < ka.length; i++) {
     const k = ka[i]
     if (!Object.prototype.hasOwnProperty.call(b, k)) return false
-    if (!deepEq((a as any)[k], (b as any)[k])) return false
+    if (!deepEq((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+      return false
   }
   return true
 }
@@ -54,11 +55,20 @@ function typeName(v: unknown): string {
 }
 
 function isGeneratorLike(v: unknown): boolean {
+  const g = v as { next?: unknown; [Symbol.iterator]?: unknown }
   return !!(
     v &&
     typeof v === 'object' &&
-    typeof (v as any).next === 'function' &&
-    typeof (v as any)[Symbol.iterator] === 'function'
+    typeof g.next === 'function' &&
+    typeof g[Symbol.iterator] === 'function'
+  )
+}
+
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return (
+    !!v &&
+    (typeof v === 'object' || typeof v === 'function') &&
+    typeof (v as PromiseLike<unknown>).then === 'function'
   )
 }
 
@@ -155,9 +165,22 @@ const cns = {
   debug: mkLog('debug'),
 }
 
+interface RunCaseMsg {
+  input?: unknown[]
+  calls?: Array<[string, unknown[]]>
+  expected?: unknown
+}
+
+interface RunMsg {
+  code: string
+  name: string
+  mode: 'fn' | 'class'
+  cases: RunCaseMsg[]
+}
+
 self.onmessage = async function (ev: MessageEvent) {
-  const m = ev.data
-  const moduleObj: { exports: any } = { exports: {} }
+  const m: RunMsg = ev.data
+  const moduleObj: { exports: Record<string, unknown> } = { exports: {} }
   const req = () => {
     throw new Error('require() is not available in sandbox')
   }
@@ -167,7 +190,7 @@ self.onmessage = async function (ev: MessageEvent) {
     platform: 'linux',
     version: 'v20.x (web-sandbox)',
   }
-  let entry: any
+  let entry: unknown
   try {
     const factory = new Function(
       'console',
@@ -187,7 +210,7 @@ self.onmessage = async function (ev: MessageEvent) {
   else await runFn(entry, m)
 }
 
-async function runFn(fn: Function, m: any) {
+async function runFn(fn: unknown, m: RunMsg) {
   if (typeof fn !== 'function') {
     reportError('Compile error', new ReferenceError(`No callable "${m.name}" found.`))
     postMessage({
@@ -201,15 +224,15 @@ async function runFn(fn: Function, m: any) {
     })
     return
   }
+  const f = fn as (...args: unknown[]) => unknown
   for (let i = 0; i < m.cases.length; i++) {
     const c = m.cases[i]
     const t0 = performance.now()
     try {
-      const note = signatureNote(m.name, fn.length, c.input)
+      const note = signatureNote(m.name, f.length, c.input ?? [])
       if (note) judgeWarn(note)
-      const raw = fn.apply(null, c.input)
-      const out =
-        raw && typeof (raw as any).then === 'function' ? await raw : raw
+      const raw = f(...(c.input ?? []))
+      const out = isThenable(raw) ? await raw : raw
       const ms = performance.now() - t0
       const hasExp = Object.prototype.hasOwnProperty.call(c, 'expected')
       const pass = hasExp ? deepEq(out, c.expected) : null
@@ -243,7 +266,7 @@ async function runFn(fn: Function, m: any) {
   postMessage({ type: 'done' })
 }
 
-async function runClass(Cls: unknown, m: any) {
+async function runClass(Cls: unknown, m: RunMsg) {
   if (typeof Cls !== 'function') {
     reportError('Compile error', new ReferenceError(`No class "${m.name}" found.`))
     postMessage({
@@ -258,24 +281,25 @@ async function runClass(Cls: unknown, m: any) {
     return
   }
 
-  const Ctor = Cls as new (...args: any[]) => any
+  const Ctor = Cls as new (...args: unknown[]) => unknown
 
   for (let i = 0; i < m.cases.length; i++) {
     const c = m.cases[i]
     const t0 = performance.now()
 
-    let inst: any = null
+    let inst: Record<string, unknown> | null = null
     const results: unknown[] = []
     let err: unknown = null
 
     try {
-      for (let j = 0; j < c.calls.length; j++) {
-        const [methodName, rawArgs = []] = c.calls[j] ?? []
-        const args = rawArgs as any[]
+      const calls = c.calls ?? []
+      for (let j = 0; j < calls.length; j++) {
+        const [methodName, rawArgs = []] = calls[j] ?? []
+        const args = rawArgs
 
         if (j === 0) {
           // First call is the constructor: ["MinStack", []]
-          inst = new Ctor(...args)
+          inst = new Ctor(...args) as Record<string, unknown>
           results.push(null)
         } else {
           // Later calls are methods: ["push", [-2]]
@@ -295,8 +319,7 @@ async function runClass(Cls: unknown, m: any) {
           if (note) judgeWarn(note)
 
           const raw = method.apply(inst, args)
-          const ret =
-            raw && typeof (raw as any).then === 'function' ? await raw : raw
+          const ret = isThenable(raw) ? await raw : raw
 
           // Normalize undefined -> null for LeetCode-style comparison
           results.push(ret === undefined ? null : ret)

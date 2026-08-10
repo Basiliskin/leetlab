@@ -14,6 +14,29 @@ interface Submission {
   ms: number | null
 }
 
+export interface LastRunCase {
+  type?: 'case'
+  i?: number
+  ms: number | null
+  ok: boolean
+  hasExp: boolean
+  pass: boolean | null
+  tle?: boolean
+  output?: string
+  error?: { name: string; message: string }
+  logs?: Array<{ l: string; t: string }>
+}
+
+export interface LastRun {
+  compile?: { name: string; message: string }
+  results: LastRunCase[]
+  logs: Array<{ l: string; t: string }>
+  verdict: string
+  passed: number
+  total: number
+  ms: number | null
+}
+
 export interface ProblemState {
   subs: Submission[]
   cases: TestCase[] | null
@@ -67,8 +90,8 @@ interface AppState {
   resetCaseMarks: () => void
   setCursorPos: (line: number, col: number) => void
   // last run results per-problem
-  lastRuns?: Record<string, any>
-  setLastRun: (slug: string, payload: any) => void
+  lastRuns?: Record<string, LastRun>
+  setLastRun: (slug: string, payload: LastRun) => void
   // typescript compiler status
   tsStatus?: string
   setTsStatus: (st: string) => void
@@ -346,7 +369,7 @@ export const useAppStore = create<AppState>()(
       setCursorPos: (line, col) => set({ cursorLine: line, cursorCol: col }),
         // last run results per-problem
         lastRuns: {},
-        setLastRun: (slug: string, payload: any) =>
+        setLastRun: (slug, payload) =>
           set((s) => ({ lastRuns: { ...(s.lastRuns || {}), [slug]: payload } })),
 
         // typescript compiler status

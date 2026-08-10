@@ -121,7 +121,7 @@ const syntaxLint = linter((view) => syntaxDiag(view), { delay: 300 });
 // if the CDN is unreachable.
 const tsLint = linter(
   async (view) => {
-    const ts = (window as any).ts;
+    const ts = (window as unknown as { ts?: typeof import("typescript") }).ts;
     if (ts && typeof ts.createLanguageService === "function") {
       try {
         const code = view.state.doc.toString();

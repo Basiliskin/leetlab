@@ -41,7 +41,7 @@ function skipType(src: string, start: number): number {
 export function stripTypes(src: string): string {
   // Whole-declaration removal (line-anchored, safe). Lazy match up to the
   // first closing brace handles both single-line and multi-line blocks.
-  let code = src
+  const code = src
     .replace(/^\s*(?:export\s+)?(?:interface|enum|namespace)\s+[^\n{]*\{[\s\S]*?\}/gm, '')
     .replace(/^\s*(?:export\s+)?type\s+[^\n=]+=[^\n;]+;\s*$/gm, '')
     .replace(/\b(?:public|private|protected|readonly|declare|override|abstract)\s+/g, '')
