@@ -1,4 +1,4 @@
-// Generate-settings modal (Phase 2 of
+// Generate-settings modal (Phases 2 & 3 of
 // docs/roadmaps/llm-provider-crud-roadmap.md).
 //
 // Topbar 'Generate' entry: pick a provider (from the user-managed provider
@@ -10,6 +10,13 @@
 // network/CORS vs server vs validation) and a retry re-runs without resetting
 // the chosen provider/model/key.
 //
+// The provider-management surface (Phase 3) is layered on top from the provider
+// row's "Manage providers" link, or from the empty state's "Add an LLM provider"
+// button when the registry has no providers. Because the registry is read lazily
+// per render, edits made there are reflected immediately on close, and a deleted
+// selection falls back to the first remaining provider (the render-time resync
+// below re-derives model/baseUrl).
+//
 // On success the validated `Problem` is written ONLY to the store's in-memory
 // `pendingGenerated` slice — nothing reaches localStorage or the problem bank
 // here (the review-before-add gate, Phase 6, owns acceptance).
@@ -18,7 +25,8 @@ import { useEffect, useRef, useState } from 'react'
 import { clearKey, getKey, redact, setKey } from '../infrastructure/apiKeys'
 import { generateValidatedProblem, GenerationValidationError } from '../infrastructure/outputValidation'
 import { ProviderError } from '../infrastructure/providerAdapters'
-import { listProviders } from '../infrastructure/providerRegistry'
+import { getProvider, listProviders } from '../infrastructure/providerRegistry'
+import { ManageProvidersModal } from './ManageProvidersModal'
 import { buildGenerationPrompt } from '../infrastructure/generationPrompt'
 import {
   describeDuplicate,
@@ -76,6 +84,12 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Phase 3: the provider-management surface, opened from the provider row
+  // ('list') or the empty state ('create'). `null` = closed.
+  const [manageIntent, setManageIntent] = useState<'list' | 'create' | null>(
+    null
+  )
+
   // Review-gate state (Phase 6): `acceptedSnapshot` holds the problem just
   // accepted so the confirmation panel can render after the queue clears;
   // `duplicateError` holds the dedupe failure (reason + colliding problem)
@@ -89,39 +103,29 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   // second request (the state-based `inFlight` alone is not enough).
   const inFlightRef = useRef(false)
 
-  // Re-prefill the key field from the apiKeys module and clear stale errors
-  // whenever the modal opens, the pending item changes, or the provider
-  // switches. Done by adjusting state during render (React's documented
-  // pattern for "state that resets when a prop changes") instead of an effect.
+  // Render-time state resync snapshot (React's documented pattern for "state
+  // that resets when a prop changes"): this tracks the last-synced open /
+  // provider / pending values, and the adjustment block below (after the
+  // selection is resolved) re-prefills the key field and re-derives model /
+  // baseUrl when any of them changed. Declared before the early return so the
+  // hook runs unconditionally.
   const [synced, setSynced] = useState({
     open,
     provider,
     pending: pendingGenerated,
   })
-  if (
-    synced.open !== open ||
-    synced.provider !== provider ||
-    synced.pending !== pendingGenerated
-  ) {
-    setSynced({ open, provider, pending: pendingGenerated })
-    setKeyInput(getKey(provider) ?? '')
-    setError(null)
-    // A different problem entered (or left) the review queue: drop stale
-    // duplicate feedback. `acceptedSnapshot` is NOT reset here — a successful
-    // Accept clears the queue and this block would otherwise wipe the
-    // confirmation panel.
-    if (synced.pending !== pendingGenerated) setDuplicateError(null)
-  }
 
-  // Close on Escape.
+  // Close on Escape — but not while the provider-management surface is layered
+  // on top; that surface owns Escape then (it un-confirms, then cancels the
+  // form, then closes itself).
   useEffect(() => {
-    if (!open) return
+    if (!open || manageIntent) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, manageIntent])
 
   if (!open) return null
 
@@ -133,37 +137,90 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const selected = providers.find((p) => p.id === provider) ?? providers[0] ?? null
   const storedKey = getKey(selected?.id ?? '')
 
+  // Adjustment block: re-prefill the key field from the apiKeys module and
+  // clear stale errors whenever the modal opens, the pending item changes, or
+  // the provider switches (including a deleted selection falling back).
+  if (
+    synced.open !== open ||
+    synced.provider !== provider ||
+    synced.pending !== pendingGenerated
+  ) {
+    setSynced({ open, provider, pending: pendingGenerated })
+    setKeyInput(getKey(selected?.id ?? '') ?? '')
+    setError(null)
+    // The provider state id no longer resolves (it was deleted in the
+    // management surface) and `selected` fell back to the first remaining
+    // provider: pin the provider state to the resolved id and resync the
+    // editable model/baseUrl to that provider's definition.
+    if (selected && provider !== selected.id) {
+      setProvider(selected.id)
+      setModel(selected.modelName)
+      setBaseUrl(selected.baseUrl)
+    }
+    // A different problem entered (or left) the review queue: drop stale
+    // duplicate feedback. `acceptedSnapshot` is NOT reset here — a successful
+    // Accept clears the queue and this block would otherwise wipe the
+    // confirmation panel.
+    if (synced.pending !== pendingGenerated) setDuplicateError(null)
+  }
+
   // Empty registry: there is nothing to generate with. No provider is
-  // special-cased, so this is the defensive empty state (the CRUD surface in
-  // Phase 3 is where a user would re-add a provider).
+  // special-cased, so this is the defensive empty state; the management surface
+  // (Phase 3) is where a user re-adds a provider, opened straight into the
+  // create form.
+  const manageOpen = manageIntent !== null
   if (!selected) {
     return (
-      <div
-        className="modal-overlay"
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-      >
+      <>
         <div
-          className="modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="gen-modal-title"
+          className="modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) onClose()
+          }}
         >
-          <div className="modal-head">
-            <div>
-              <h2 id="gen-modal-title">Generate a problem</h2>
-              <p className="modal-sub">No LLM providers are configured.</p>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gen-modal-title"
+          >
+            <div className="modal-head">
+              <div>
+                <h2 id="gen-modal-title">Generate a problem</h2>
+                <p className="modal-sub">No LLM providers are configured.</p>
+              </div>
+              <button type="button" className="modal-x" onClick={onClose} aria-label="Close">
+                ✕
+              </button>
             </div>
-            <button type="button" className="modal-x" onClick={onClose} aria-label="Close">
-              ✕
-            </button>
-          </div>
-          <div className="gen-empty" role="status">
-            Add an LLM provider to start generating problems.
+            <div className="gen-empty" role="status">
+              Add an LLM provider to start generating problems.
+              <button
+                type="button"
+                className="btn btn-submit gen-empty-btn"
+                onClick={() => setManageIntent('create')}
+              >
+                Add an LLM provider
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+        <ManageProvidersModal
+          open={manageOpen}
+          onClose={() => setManageIntent(null)}
+          initialMode={manageIntent === 'create' ? 'create' : 'list'}
+          onCreated={(id) => {
+            const created = getProvider(id)
+            setProvider(id)
+            if (created) {
+              setModel(created.modelName)
+              setBaseUrl(created.baseUrl)
+            }
+            setKeyInput(getKey(id) ?? '')
+            setError(null)
+          }}
+        />
+      </>
     )
   }
 
@@ -248,22 +305,23 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   }
 
   return (
-    <div
-      className="modal-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="gen-modal-title">
-        <div className="modal-head">
-          <div>
-            <h2 id="gen-modal-title">
-              {showReview
-                ? 'Review generated problem'
-                : showAccepted
-                  ? 'Problem added'
-                  : 'Generate a problem'}
-            </h2>
+    <>
+      <div
+        className="modal-overlay"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+      >
+        <div className="modal" role="dialog" aria-modal="true" aria-labelledby="gen-modal-title">
+          <div className="modal-head">
+            <div>
+              <h2 id="gen-modal-title">
+                {showReview
+                  ? 'Review generated problem'
+                  : showAccepted
+                    ? 'Problem added'
+                    : 'Generate a problem'}
+              </h2>
             {showReview ? (
               <p className="modal-sub">
                 Nothing is added to the problem bank until you accept it.
@@ -406,6 +464,16 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
                   </option>
                 ))}
               </select>
+              <div className="field-hint">
+                Selected from the provider registry.{' '}
+                <button
+                  type="button"
+                  className="manage-link"
+                  onClick={() => setManageIntent('list')}
+                >
+                  Manage providers…
+                </button>
+              </div>
             </div>
 
             <div className="form-row">
@@ -489,7 +557,23 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
             </div>
           </form>
         )}
+        </div>
       </div>
-    </div>
+      <ManageProvidersModal
+        open={manageOpen}
+        onClose={() => setManageIntent(null)}
+        initialMode={manageIntent === 'create' ? 'create' : 'list'}
+        onCreated={(id) => {
+          const created = getProvider(id)
+          setProvider(id)
+          if (created) {
+            setModel(created.modelName)
+            setBaseUrl(created.baseUrl)
+          }
+          setKeyInput(getKey(id) ?? '')
+          setError(null)
+        }}
+      />
+    </>
   )
 }

@@ -426,6 +426,41 @@
   .import-errors li{margin-bottom:2px}
   .import-errors li:last-child{margin-bottom:0}
 
+  /* ---------- provider management modal (Phase 3) ---------- */
+  .manage-link{
+    background:none;border:none;color:var(--amber2);cursor:pointer;
+    font-family:var(--mono);font-size:11px;padding:0;text-decoration:underline dotted;
+    text-underline-offset:3px;transition:color .15s;
+  }
+  .manage-link:hover{color:var(--amber)}
+  .gen-empty-btn{margin-top:12px}
+  .providers{list-style:none;display:flex;flex-direction:column;gap:8px}
+  .provider-row{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;
+    border:1px solid var(--line-soft);border-radius:8px;background:var(--inset);
+  }
+  .provider-main{flex:1;min-width:0}
+  .provider-name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px}
+  .protocol-pill{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 7px;
+    border-radius:20px;text-transform:uppercase;
+  }
+  .protocol-pill.openai{color:var(--cyan);background:rgba(88,196,220,.12)}
+  .protocol-pill.anthropic{color:var(--amber2);background:rgba(255,161,22,.12)}
+  .provider-detail{
+    font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .provider-detail code{color:var(--mut)}
+  .provider-actions{display:flex;gap:6px;flex:0 0 auto}
+  .prow-btn{
+    background:none;border:1px solid var(--line);color:var(--mut);border-radius:6px;cursor:pointer;
+    font-family:var(--mono);font-size:10.5px;padding:4px 9px;transition:all .15s;
+  }
+  .prow-btn:hover{color:var(--ink);border-color:#3a4859}
+  .prow-btn.danger{color:#ff8f86;border-color:rgba(248,81,73,.4)}
+  .prow-btn.danger:hover{background:rgba(248,81,73,.1)}
+
   @media (max-width:980px){
     .shell{flex-direction:column;overflow-y:auto}
     .sidebar{flex:0 0 auto;max-height:210px}
