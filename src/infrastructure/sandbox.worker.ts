@@ -45,6 +45,76 @@ function errInfo(e: unknown) {
   }
 }
 
+function typeName(v: unknown): string {
+  if (v === null) return 'null'
+  if (Array.isArray(v)) return 'array'
+  if (typeof v === 'object')
+    return Object.prototype.toString.call(v).slice(8, -1).toLowerCase()
+  return typeof v
+}
+
+function isGeneratorLike(v: unknown): boolean {
+  return !!(
+    v &&
+    typeof v === 'object' &&
+    typeof (v as any).next === 'function' &&
+    typeof (v as any)[Symbol.iterator] === 'function'
+  )
+}
+
+function judgeWarn(msg: string) {
+  cns.warn(`[judge] ${msg}`)
+}
+
+// Compare the harness call arity against the declared fn.length. Advisory
+// only: rest params / default values shrink fn.length, so this never fails a
+// case, it just surfaces likely signature mixups.
+function signatureNote(
+  name: string,
+  declared: number,
+  args: unknown[]
+): string | null {
+  if (typeof declared !== 'number' || declared === args.length) return null
+  const call = args.map(safeOut).join(', ')
+  return `${name} is called with ${args.length} argument(s): ${call} — but the function declares ${declared} parameter(s). Check the expected signature in the problem description.`
+}
+
+// Explain common wrong-return-value shapes so a failing case is diagnosable
+// without opening DevTools. Emitted only when the comparison already failed.
+function returnHints(
+  out: unknown,
+  expected: unknown,
+  name: string
+): string[] {
+  const hints: string[] = []
+  if (isGeneratorLike(out)) {
+    hints.push(
+      `${name} returned a Generator object. The judge compares the return value directly, so drain the generator with gen.next(v) in a loop and return a plain array.`
+    )
+  }
+  if (out === undefined && expected !== undefined) {
+    hints.push(
+      `${name} returned undefined. Did you forget a return statement?`
+    )
+  }
+  const expArr = Array.isArray(expected)
+  const outArr = Array.isArray(out)
+  const expObj = expected !== null && typeof expected === 'object'
+  const outObj = out !== null && typeof out === 'object'
+  if (expArr && outObj && !outArr) {
+    hints.push(`${name} should return an array, but got ${typeName(out)}.`)
+  } else if (!expArr && expObj && outArr) {
+    hints.push(
+      `${name} should return ${typeName(expected)}, but got an array.`
+    )
+  } else if (!expArr && !expObj && typeof out !== typeof expected) {
+    hints.push(
+      `${name} should return ${typeof expected}, but got ${typeName(out)}.`
+    )
+  }
+  return hints
+}
+
 const LOG: Array<{ l: string; t: string }> = []
 function drain() {
   return LOG.splice(0, LOG.length)
@@ -135,18 +205,24 @@ async function runFn(fn: Function, m: any) {
     const c = m.cases[i]
     const t0 = performance.now()
     try {
+      const note = signatureNote(m.name, fn.length, c.input)
+      if (note) judgeWarn(note)
       const raw = fn.apply(null, c.input)
       const out =
         raw && typeof (raw as any).then === 'function' ? await raw : raw
       const ms = performance.now() - t0
       const hasExp = Object.prototype.hasOwnProperty.call(c, 'expected')
+      const pass = hasExp ? deepEq(out, c.expected) : null
+      if (hasExp && !pass) {
+        returnHints(out, c.expected, m.name).forEach(judgeWarn)
+      }
       postMessage({
         type: 'case',
         i,
         ms,
         ok: true,
         hasExp,
-        pass: hasExp ? deepEq(out, c.expected) : null,
+        pass,
         output: safeOut(out),
         logs: drain(),
       })
@@ -210,6 +286,13 @@ async function runClass(Cls: unknown, m: any) {
               `Method "${String(methodName)}" does not exist on the instance.`
             )
           }
+
+          const note = signatureNote(
+            `${m.name}.${String(methodName)}`,
+            method.length,
+            args
+          )
+          if (note) judgeWarn(note)
 
           const raw = method.apply(inst, args)
           const ret =

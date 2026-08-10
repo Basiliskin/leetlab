@@ -188,6 +188,19 @@ export function EditorPane() {
             ms: null,
           });
         }
+      } else if (e?.type === "compile") {
+        // Sandbox compile failure (e.g. the expected function/class is not
+        // defined): surface the banner and any judge logs in the result view.
+        setLastRun(currentSlug, {
+          compile: e.error,
+          results: [],
+          logs: e.logs || [],
+          verdict: "Compile Error",
+          passed: 0,
+          total: 0,
+          ms: null,
+        });
+        useAppStore.getState().setActiveResultTab("result");
       } else {
         console.error(e);
         alert("Run failed: " + (e?.type || e?.message || e));
