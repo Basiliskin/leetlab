@@ -29,6 +29,11 @@ interface AppState {
   problems: Record<string, ProblemState>
   generatedProblems: Problem[]
 
+  // In-memory only — a validated generated problem awaiting review (Phase 5).
+  // Deliberately NOT in partialize: it never reaches localStorage, so a
+  // reload clears it and it can't leak into full-state exports.
+  pendingGenerated: Problem | null
+
   currentSlug: string
   selectedCaseIdx: number
   filter: 'All' | 'Easy' | 'Medium' | 'Hard'
@@ -57,6 +62,7 @@ interface AppState {
   markSolved: () => void
   acceptGeneratedProblem: (problem: Problem) => AcceptGeneratedResult
   discardGeneratedProblem: (slug: string) => void
+  setPendingGenerated: (problem: Problem | null) => void
   setCaseMark: (caseId: string, mark: string) => void
   resetCaseMarks: () => void
   setCursorPos: (line: number, col: number) => void
@@ -180,6 +186,7 @@ export const useAppStore = create<AppState>()(
       lastSlug: PROBLEM_BANK[0].slug,
       problems: {},
       generatedProblems: [],
+      pendingGenerated: null,
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
       filter: 'All',
@@ -323,6 +330,8 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           generatedProblems: s.generatedProblems.filter((p) => p.slug !== slug),
         })),
+
+      setPendingGenerated: (problem) => set({ pendingGenerated: problem }),
 
       setCaseMark: (caseId, mark) =>
         set((s) => ({ caseMarks: { ...s.caseMarks, [caseId]: mark } })),

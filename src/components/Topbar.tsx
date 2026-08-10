@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { useAppStore, useMergedBank } from "../infrastructure/store";
+import { GenerateModal } from "./GenerateModal";
 
 export function Topbar() {
+  const [generateOpen, setGenerateOpen] = useState(false);
   const bankLength = useMergedBank().length;
   const solvedCount = Object.values(
     useAppStore((s) => s.problems) || {},
@@ -39,6 +42,10 @@ export function Topbar() {
             ? "TS · fallback stripper"
             : "TS · loading…"}
       </div>
+      <button className="gen-btn" onClick={() => setGenerateOpen(true)}>
+        + Generate
+      </button>
+      <GenerateModal open={generateOpen} onClose={() => setGenerateOpen(false)} />
     </header>
   );
 }
