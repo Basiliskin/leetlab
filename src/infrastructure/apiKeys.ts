@@ -1,12 +1,19 @@
-// Provider API keys for LLM generation (Anthropic / OpenAI / local), stored
-// under their own localStorage key so key material stays out of the Zustand
-// persist slice (`leetlab.v2`) and the full-state export/import path.
+// Provider API keys for LLM generation, stored under their own localStorage
+// key so key material stays out of the Zustand persist slice (`leetlab.v2`)
+// and the full-state export/import path.
 //
 // This module is the single import point for key storage: provider adapters
 // and the settings UI read/write keys only through getKey/setKey/clearKey and
 // never touch localStorage for key material directly. Keys are excluded from
 // full-state backups by construction (no consumer of this module is reachable
 // from the export path).
+//
+// Keys are keyed by provider id. The id is an arbitrary string — the built-in
+// Anthropic/OpenAI/local ids plus any user-added provider (see the provider
+// CRUD roadmap). Storage has always been `Record<string, string>` at runtime,
+// so widening from the closed union is a pure type-level change; `ApiProvider`
+// stays as an alias for the built-in ids until the generate path dispatches on
+// protocol instead of provider id.
 
 export type ApiProvider = 'anthropic' | 'openai' | 'local'
 
@@ -45,11 +52,11 @@ function writeAll(entry: Record<string, string>): void {
   }
 }
 
-export function getKey(provider: ApiProvider): string | null {
+export function getKey(provider: string): string | null {
   return readAll()?.[provider] ?? null
 }
 
-export function setKey(provider: ApiProvider, key: string): void {
+export function setKey(provider: string, key: string): void {
   const entry = readAll() ?? {}
   if (key) {
     entry[provider] = key
@@ -59,7 +66,7 @@ export function setKey(provider: ApiProvider, key: string): void {
   writeAll(entry)
 }
 
-export function clearKey(provider: ApiProvider): void {
+export function clearKey(provider: string): void {
   const entry = readAll()
   if (!entry) return
   delete entry[provider]
