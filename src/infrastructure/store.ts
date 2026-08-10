@@ -26,6 +26,7 @@ interface AppState {
   split: number
   lastSlug: string
   problems: Record<string, ProblemState>
+  generatedProblems: Problem[]
 
   currentSlug: string
   selectedCaseIdx: number
@@ -53,6 +54,8 @@ interface AppState {
   saveCode: (code: string) => void
   addSubmission: (sub: Submission) => void
   markSolved: () => void
+  acceptGeneratedProblem: (problem: Problem) => AcceptGeneratedResult
+  discardGeneratedProblem: (slug: string) => void
   setCaseMark: (caseId: string, mark: string) => void
   resetCaseMarks: () => void
   setCursorPos: (line: number, col: number) => void
@@ -94,6 +97,56 @@ export const getDefaultCases = (problem: Problem): TestCase[] => {
   return cases
 }
 
+/* =========================================
+  GENERATED-PROBLEM SLICE (pure helpers)
+  ========================================= */
+
+/**
+ * Accepted generated problems are numbered from the 9000-series, which
+ * collides with neither the real LeetCode nums in the bank (1..704) nor the
+ * 8000-series custom range (8001..8012).
+ */
+const GENERATED_NUM_BASE = 9000
+
+export type DuplicateReason =
+  | 'duplicate-slug'
+  | 'duplicate-title'
+  | 'duplicate-signature'
+
+export type AcceptGeneratedResult =
+  | { ok: true }
+  | { ok: false; reason: DuplicateReason; collidingWith: Problem }
+
+/**
+ * First built-in or accepted generated problem colliding with `problem`,
+ * or null. Priority is slug, then title, then signature (mode + fnName),
+ * each searched across the merged bank.
+ */
+export const findGeneratedCollision = (
+  problem: Problem,
+  builtin: Problem[],
+  accepted: Problem[]
+): { reason: DuplicateReason; collidingWith: Problem } | null => {
+  const bank = builtin.concat(accepted)
+  const bySlug = bank.find((p) => p.slug === problem.slug)
+  if (bySlug) return { reason: 'duplicate-slug', collidingWith: bySlug }
+  const byTitle = bank.find((p) => p.title === problem.title)
+  if (byTitle) return { reason: 'duplicate-title', collidingWith: byTitle }
+  const bySignature = bank.find(
+    (p) => p.mode === problem.mode && p.fnName === problem.fnName
+  )
+  if (bySignature) return { reason: 'duplicate-signature', collidingWith: bySignature }
+  return null
+}
+
+/** Smallest free number >= GENERATED_NUM_BASE not present in `taken`. */
+export const nextGeneratedNum = (taken: number[]): number => {
+  const used = new Set(taken)
+  let num = GENERATED_NUM_BASE
+  while (used.has(num)) num += 1
+  return num
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -101,6 +154,7 @@ export const useAppStore = create<AppState>()(
       split: 0.44,
       lastSlug: PROBLEM_BANK[0].slug,
       problems: {},
+      generatedProblems: [],
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
       filter: 'All',
@@ -224,6 +278,24 @@ export const useAppStore = create<AppState>()(
         })
       },
 
+      acceptGeneratedProblem: (problem) => {
+        const { generatedProblems } = get()
+        const collision = findGeneratedCollision(problem, PROBLEM_BANK, generatedProblems)
+        if (collision) return { ok: false, ...collision }
+        const num = nextGeneratedNum([
+          ...PROBLEM_BANK.map((p) => p.num),
+          ...generatedProblems.map((p) => p.num),
+        ])
+        const accepted = { ...problem, num }
+        set({ generatedProblems: [...generatedProblems, accepted] })
+        return { ok: true }
+      },
+
+      discardGeneratedProblem: (slug) =>
+        set((s) => ({
+          generatedProblems: s.generatedProblems.filter((p) => p.slug !== slug),
+        })),
+
       setCaseMark: (caseId, mark) =>
         set((s) => ({ caseMarks: { ...s.caseMarks, [caseId]: mark } })),
 
@@ -244,11 +316,19 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'leetlab.v2',
+      // Persist strategy: additive default, no key bump.
+      // `generatedProblems` is additive with a safe default ([]), and
+      // zustand's shallow merge keeps that default for existing users whose
+      // persisted state predates the field, so prior state
+      // ({lang, split, lastSlug, problems}) survives without a leetlab.v3
+      // bump or a migrate. A bump would only be warranted for a field that
+      // needs prior data transformed on upgrade.
       partialize: (state) => ({
         lang: state.lang,
         split: state.split,
         lastSlug: state.lastSlug,
         problems: state.problems,
+        generatedProblems: state.generatedProblems,
       }),
     }
   )

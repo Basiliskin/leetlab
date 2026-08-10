@@ -22,7 +22,7 @@ Clean-ish three-layer split inside `src/` (no `domain` layer logic beyond types)
 - `src/domain/` — pure types only: `Problem.ts` (problem shape, `mode: 'fn' | 'class'`), `TestCase.ts` (case + parse-result shapes). No behavior.
 - `src/infrastructure/` — the "engine":
   - `problemBank.ts` — static `PROBLEM_BANK` array, the single source of truth for all problems (slug, difficulty, starter code, tests, hints, HTML `desc`).
-  - `store.ts` — zustand store `useAppStore`, persisted to `localStorage` under key `leetlab.v2` (only `lang`, `split`, `lastSlug`, `problems` are persisted via `partialize`). Per-problem state: `subs` (submission history, capped at last 60), `cases` (custom test cases; `null` = fall back to builtins), `js`/`ts` code, `solvedAt`.
+  - `store.ts` — zustand store `useAppStore`, persisted to `localStorage` under key `leetlab.v2` (`lang`, `split`, `lastSlug`, `problems`, `generatedProblems` are persisted via `partialize`). Per-problem state: `subs` (submission history, capped at last 60), `cases` (custom test cases; `null` = fall back to builtins), `js`/`ts` code, `solvedAt`. The generated-problem slice (`generatedProblems: Problem[]`, `acceptGeneratedProblem`, `discardGeneratedProblem`) holds LLM-generated problems accepted via the review gate; exported pure helpers `findGeneratedCollision` (slug > title > signature dedupe against `PROBLEM_BANK` + accepted) and `nextGeneratedNum` (smallest free 9000-series num) back it.
   - `sandbox.worker.ts` — the judge. Receives `{code, name, mode, cases}`, builds a `new Function` factory with mocked `console`/`module`/`exports`/`require`(throws)/`process`, and posts back messages.
   - `tsCompiler.ts` — loads TypeScript from the jsDelivr CDN at runtime; falls back to a regex-based type stripper if the CDN fails.
 - `src/hooks/useRunCode.ts` — spawns the worker per run, 6s timeout, aggregates results; also exports `parseCases` (JSON-string text → parsed cases with `parseError`).
@@ -60,7 +60,7 @@ Vite (`vite.config.ts`) and tsconfig both define: `@` → `src`, `@domain` → `
 - Problem descriptions in `problemBank.ts` are raw HTML strings rendered with `dangerouslySetInnerHTML` in DescPane; new problems must follow the same HTML shape (`<div class="ex">`, `<code>`, `<p class="note">`).
 - Problem numbers in the bank are sparse (1, 3, 20, 42, 56, 155…); `Topbar` hardcodes 6 progress segments instead of deriving from `PROBLEM_BANK.length`.
 - Store file has inconsistent indentation around the `lastRuns`/`tsStatus` block (extra indent) — match surrounding style when editing there, or normalize carefully.
-- Persisted shape lives under a versioned key (`leetlab.v2`). Changing persisted fields requires a key bump or a migration, or users get stale/undefined persisted state.
+- Persisted shape lives under a versioned key (`leetlab.v2`). Adding a persisted field is decided per-field: additive fields with a safe default (e.g. `generatedProblems: []`) stay on `leetlab.v2` — zustand's shallow merge keeps the default for existing users — while fields needing prior-data transformation require a `leetlab.v3` bump with a `migrate`.
 - The sandbox `new Function` factory re-declares `console`, `module`, `exports`, `require`, `process` as locals, so user code that references e.g. `window`/`fetch` will run (it's a real window scope) — don't rely on the sandbox for security/isolation; it's purely for ergonomics.
 
 ## Adding a new problem
