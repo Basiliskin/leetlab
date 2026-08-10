@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAppStore, useMergedBank } from "../infrastructure/store";
+import { downloadFullState } from "../infrastructure/fullStateExport";
 import { GenerateModal } from "./GenerateModal";
 
 export function Topbar() {
@@ -44,6 +45,9 @@ export function Topbar() {
       </div>
       <button className="gen-btn" onClick={() => setGenerateOpen(true)}>
         + Generate
+      </button>
+      <button className="gen-btn" onClick={downloadFullState}>
+        ⇩ Export
       </button>
       <GenerateModal open={generateOpen} onClose={() => setGenerateOpen(false)} />
     </header>

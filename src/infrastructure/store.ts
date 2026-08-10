@@ -14,7 +14,7 @@ interface Submission {
   ms: number | null
 }
 
-interface ProblemState {
+export interface ProblemState {
   subs: Submission[]
   cases: TestCase[] | null
   js: string | null
