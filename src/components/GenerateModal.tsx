@@ -16,7 +16,13 @@ import { clearKey, getKey, redact, setKey, type ApiProvider } from '../infrastru
 import { generateValidatedProblem, GenerationValidationError } from '../infrastructure/outputValidation'
 import { PROVIDERS, ProviderError } from '../infrastructure/providerAdapters'
 import { buildGenerationPrompt } from '../infrastructure/generationPrompt'
+import {
+  describeDuplicate,
+  duplicateHeadline,
+  type DuplicateInfo,
+} from '../infrastructure/reviewGate'
 import { useAppStore } from '../infrastructure/store'
+import type { Problem } from '../domain/Problem'
 
 interface GenerateModalProps {
   open: boolean
@@ -50,6 +56,8 @@ function describeGenerationError(err: unknown): string {
 export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const pendingGenerated = useAppStore((s) => s.pendingGenerated)
   const setPendingGenerated = useAppStore((s) => s.setPendingGenerated)
+  const acceptGeneratedProblem = useAppStore((s) => s.acceptGeneratedProblem)
+  const discardGeneratedProblem = useAppStore((s) => s.discardGeneratedProblem)
 
   const [provider, setProvider] = useState<ApiProvider>('anthropic')
   const [model, setModel] = useState(() => PROVIDERS[0].models[0].id)
@@ -59,6 +67,15 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const [keyInput, setKeyInput] = useState('')
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Review-gate state (Phase 6): `acceptedSnapshot` holds the problem just
+  // accepted so the confirmation panel can render after the queue clears;
+  // `duplicateError` holds the dedupe failure (reason + colliding problem)
+  // surfaced on a failed Accept. Neither is persisted.
+  const [acceptedSnapshot, setAcceptedSnapshot] = useState<Problem | null>(null)
+  const [duplicateError, setDuplicateError] = useState<DuplicateInfo | null>(
+    null
+  )
 
   // Synchronous guard: a second click before React re-renders must not start a
   // second request (the state-based `inFlight` alone is not enough).
@@ -81,6 +98,11 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
     setSynced({ open, provider, pending: pendingGenerated })
     setKeyInput(getKey(provider) ?? '')
     setError(null)
+    // A different problem entered (or left) the review queue: drop stale
+    // duplicate feedback. `acceptedSnapshot` is NOT reset here — a successful
+    // Accept clears the queue and this block would otherwise wipe the
+    // confirmation panel.
+    if (synced.pending !== pendingGenerated) setDuplicateError(null)
   }
 
   // Close on Escape.
@@ -98,13 +120,48 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   const cfg = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0]
   const storedKey = getKey(provider)
   const keyRequired = provider !== 'local'
-  const showSuccess = pendingGenerated !== null
+  // Review-gate view state: a pending problem awaiting review, a confirmation
+  // for the problem just accepted (queue already cleared), or the form.
+  const showReview = pendingGenerated !== null
+  const showAccepted = acceptedSnapshot !== null
 
   const onProviderChange = (id: ApiProvider) => {
     const next = PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0]
     setProvider(id)
     setModel(next.models[0]?.id ?? '')
     setError(null)
+  }
+
+  // Accept: branch on the dedupe result. A collision renders a distinct
+  // collider-naming message and keeps the pending problem in the queue (only
+  // Discard empties the queue on this path); a clean accept persists, clears
+  // the queue and switches to the confirmation panel.
+  const handleAccept = () => {
+    const pending = pendingGenerated
+    if (!pending || acceptedSnapshot) return
+    const result = acceptGeneratedProblem(pending)
+    if (result.ok) {
+      setAcceptedSnapshot(pending)
+      setPendingGenerated(null)
+      setDuplicateError(null)
+    } else {
+      setDuplicateError(result)
+    }
+  }
+
+  // Discard: removes the pending problem from the queue and never persists.
+  // No-op when the queue is empty.
+  const handleDiscard = () => {
+    if (!pendingGenerated) return
+    discardGeneratedProblem(pendingGenerated.slug)
+    setDuplicateError(null)
+    setAcceptedSnapshot(null)
+  }
+
+  const closeAfterAccept = () => {
+    setAcceptedSnapshot(null)
+    setDuplicateError(null)
+    onClose()
   }
 
   const runGeneration = async () => {
@@ -130,7 +187,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
         prompt: buildGenerationPrompt(),
       })
       // The only write on success: the in-memory pending slice. The view
-      // switches to the success panel once pendingGenerated is set.
+      // switches to the review panel once pendingGenerated is set.
       setPendingGenerated(problem)
     } catch (err) {
       setError(describeGenerationError(err))
@@ -151,12 +208,20 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
         <div className="modal-head">
           <div>
             <h2 id="gen-modal-title">
-              {showSuccess ? 'Generated problem' : 'Generate a problem'}
+              {showReview
+                ? 'Review generated problem'
+                : showAccepted
+                  ? 'Problem added'
+                  : 'Generate a problem'}
             </h2>
-            {showSuccess ? (
+            {showReview ? (
               <p className="modal-sub">
-                Validated and ready for the review step — nothing has been added
-                to the problem bank yet.
+                Nothing is added to the problem bank until you accept it.
+              </p>
+            ) : showAccepted ? (
+              <p className="modal-sub">
+                The problem is saved in this browser alongside the built-in
+                problems.
               </p>
             ) : (
               <p className="modal-sub">
@@ -170,7 +235,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
           </button>
         </div>
 
-        {showSuccess && pendingGenerated ? (
+        {showReview && pendingGenerated ? (
           <div className="gen-success">
             <div className="gen-success-head">
               <span className={`pill ${pendingGenerated.difficulty}`}>
@@ -193,9 +258,40 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
                 ))}
               </div>
             )}
+            <div className="gen-tests">
+              <div className="gen-tests-label">Test preview</div>
+              {pendingGenerated.tests.length === 0 ? (
+                <div className="gen-tests-empty">No tests in this problem.</div>
+              ) : (
+                pendingGenerated.tests.map((t, i) => (
+                  <div key={i} className="gen-test">
+                    <div className="gen-test-row">
+                      <span className="gen-test-tag">
+                        {pendingGenerated.mode === 'class' ? 'calls' : 'in'}
+                      </span>
+                      <code>
+                        {JSON.stringify(
+                          pendingGenerated.mode === 'class' ? t.calls : t.in
+                        )}
+                      </code>
+                    </div>
+                    <div className="gen-test-row">
+                      <span className="gen-test-tag out">out</span>
+                      <code>{JSON.stringify(t.out)}</code>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {duplicateError && (
+              <div className="gen-dupe" role="alert">
+                <b>{duplicateHeadline(duplicateError.reason)} — not added.</b>{' '}
+                {describeDuplicate(duplicateError)}
+              </div>
+            )}
             <div className="gen-note">
-              This problem is held in memory for review (accept or discard).
-              Generating a new problem replaces it.
+              Accepting adds this problem to your problem bank. Discard removes
+              it from the review queue without changing the bank.
             </div>
             <div className="modal-actions">
               <button type="button" className="btn-ghost" onClick={onClose}>
@@ -203,13 +299,39 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
               </button>
               <button
                 type="button"
-                className="btn btn-submit"
-                onClick={() => {
-                  setError(null)
-                  setPendingGenerated(null)
-                }}
+                className="btn btn-danger"
+                onClick={handleDiscard}
               >
-                New problem
+                Discard
+              </button>
+              <button
+                type="button"
+                className="btn btn-submit"
+                onClick={handleAccept}
+              >
+                Accept & add
+              </button>
+            </div>
+          </div>
+        ) : showAccepted && acceptedSnapshot ? (
+          <div className="gen-confirm" role="status">
+            <div className="gen-success-head">
+              <span className={`pill ${acceptedSnapshot.difficulty}`}>
+                {acceptedSnapshot.difficulty}
+              </span>
+              <h3 className="gen-success-title">{acceptedSnapshot.title}</h3>
+            </div>
+            <p>
+              Added to your problem bank. It appears in the sidebar alongside
+              the built-in problems and persists across reloads.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-submit"
+                onClick={closeAfterAccept}
+              >
+                Done
               </button>
             </div>
           </div>

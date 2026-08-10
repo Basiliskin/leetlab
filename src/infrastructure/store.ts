@@ -326,9 +326,15 @@ export const useAppStore = create<AppState>()(
         return { ok: true }
       },
 
+      // Discard removes an accepted problem from the bank (no-op for a
+      // pending-only problem) and, when the slug matches, clears the review
+      // queue — the Phase 6 accept/discard gate empties the queue only here
+      // and on a successful accept, never on a failed one.
       discardGeneratedProblem: (slug) =>
         set((s) => ({
           generatedProblems: s.generatedProblems.filter((p) => p.slug !== slug),
+          pendingGenerated:
+            s.pendingGenerated?.slug === slug ? null : s.pendingGenerated,
         })),
 
       setPendingGenerated: (problem) => set({ pendingGenerated: problem }),

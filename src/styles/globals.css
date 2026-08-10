@@ -384,6 +384,39 @@
     border:1px solid rgba(88,196,220,.35);background:rgba(88,196,220,.07);border-radius:8px;
     padding:10px 13px;font-size:12.5px;color:#a8d9e6;line-height:1.55;
   }
+  /* ---------- review-before-add gate (Phase 6) ---------- */
+  .gen-tests{border:1px solid var(--line);border-radius:8px;background:var(--inset);padding:10px 12px;margin-bottom:14px}
+  .gen-tests-label{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    margin-bottom:8px;
+  }
+  .gen-test{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:8px 10px;margin-bottom:8px}
+  .gen-test:last-child{margin-bottom:0}
+  .gen-test-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:11.5px}
+  .gen-test-row:last-child{margin-bottom:0}
+  .gen-test-row code{color:var(--mut);white-space:pre-wrap;word-break:break-all}
+  .gen-test-tag{
+    flex:0 0 auto;margin-top:1px;font-size:9.5px;letter-spacing:.06em;padding:2px 6px;border-radius:4px;
+    background:rgba(88,196,220,.12);color:#7cc7dd;text-transform:uppercase;
+  }
+  .gen-test-tag.out{background:rgba(63,185,80,.12);color:#7fdd90}
+  .gen-tests-empty{font-size:12px;color:var(--dim);font-style:italic}
+  .gen-dupe{
+    border:1px solid rgba(248,81,73,.45);background:rgba(248,81,73,.08);border-radius:8px;
+    padding:11px 14px;font-size:12.5px;color:#ffb4ae;line-height:1.6;margin-bottom:14px;
+  }
+  .gen-dupe b{color:#ffd0cc}
+  .gen-confirm{
+    border:1px solid rgba(63,185,80,.4);background:rgba(63,185,80,.07);border-radius:10px;
+    padding:14px 16px;
+  }
+  .gen-confirm p{font-size:12.5px;color:#b5e8bf;line-height:1.55;margin-top:8px}
+  .btn-danger{
+    background:none;border:1px solid rgba(248,81,73,.5);color:#ff8f86;border-radius:8px;padding:9px 16px;
+    cursor:pointer;font-family:var(--body);font-weight:600;font-size:13px;transition:all .18s;
+  }
+  .btn-danger:hover:not(:disabled){background:rgba(248,81,73,.1);color:#ffb4ae;border-color:#ff8f86}
+  .btn-danger:disabled{opacity:.5;cursor:not-allowed}
 
   @media (max-width:980px){
     .shell{flex-direction:column;overflow-y:auto}
