@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useAppStore, useMergedBank } from "../infrastructure/store";
 import { downloadFullState } from "../infrastructure/fullStateExport";
 import { GenerateModal } from "./GenerateModal";
+import { ImportModal } from "./ImportModal";
 
 export function Topbar() {
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const bankLength = useMergedBank().length;
   const solvedCount = Object.values(
     useAppStore((s) => s.problems) || {},
@@ -49,7 +51,11 @@ export function Topbar() {
       <button className="gen-btn" onClick={downloadFullState}>
         ⇩ Export
       </button>
+      <button className="gen-btn" onClick={() => setImportOpen(true)}>
+        ⇧ Import
+      </button>
       <GenerateModal open={generateOpen} onClose={() => setGenerateOpen(false)} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
     </header>
   );
 }
