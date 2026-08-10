@@ -1,7 +1,7 @@
-import { PROBLEM_BANK } from "../infrastructure/problemBank";
-import { useAppStore } from "../infrastructure/store";
+import { useAppStore, useMergedBank } from "../infrastructure/store";
 
 export function Sidebar() {
+  const bank = useMergedBank();
   const selectProblem = useAppStore((s) => s.selectProblem);
   const currentSlug = useAppStore((s) => s.currentSlug);
   const filter = useAppStore((s) => s.filter);
@@ -13,24 +13,23 @@ export function Sidebar() {
   const problems = useAppStore((s) => s.problems);
 
   const counts = {
-    All: PROBLEM_BANK.length,
+    All: bank.length,
     Easy: 0,
     Medium: 0,
     Hard: 0,
   } as Record<string, number>;
-  PROBLEM_BANK.forEach(
+  bank.forEach(
     (p) => (counts[p.difficulty] = (counts[p.difficulty] || 0) + 1),
   );
 
-  const doneCount = PROBLEM_BANK.filter((p) => !!problems[p.slug]?.solvedAt)
-    .length;
+  const doneCount = bank.filter((p) => !!problems[p.slug]?.solvedAt).length;
   const statusCounts = {
-    All: PROBLEM_BANK.length,
+    All: bank.length,
     Done: doneCount,
-    Undone: PROBLEM_BANK.length - doneCount,
+    Undone: bank.length - doneCount,
   } as Record<string, number>;
 
-  const filtered = PROBLEM_BANK.filter((p) => {
+  const filtered = bank.filter((p) => {
     const okFilter = filter === "All" || p.difficulty === filter;
     const solved = !!problems[p.slug]?.solvedAt;
     const okStatus =

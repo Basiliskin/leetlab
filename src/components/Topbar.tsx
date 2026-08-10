@@ -1,7 +1,7 @@
-import { useAppStore } from "../infrastructure/store";
-import { PROBLEM_BANK } from "../infrastructure/problemBank";
+import { useAppStore, useMergedBank } from "../infrastructure/store";
 
 export function Topbar() {
+  const bankLength = useMergedBank().length;
   const solvedCount = Object.values(
     useAppStore((s) => s.problems) || {},
   ).filter((p) => p.solvedAt).length;
@@ -21,12 +21,12 @@ export function Topbar() {
       <div className="spacer" />
       <div className="progress">
         <div className="segs">
-          {Array.from({ length: PROBLEM_BANK.length }).map((_, i) => (
+          {Array.from({ length: bankLength }).map((_, i) => (
             <i key={i} className={i < solvedCount ? "on" : ""} />
           ))}
         </div>
         <div className="cnt">
-          <b>{solvedCount}</b>/<span>{PROBLEM_BANK.length}</span> solved
+          <b>{solvedCount}</b>/<span>{bankLength}</span> solved
         </div>
       </div>
       <div

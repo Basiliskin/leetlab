@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Problem } from '@domain/Problem'
@@ -147,6 +148,30 @@ export const nextGeneratedNum = (taken: number[]): number => {
   return num
 }
 
+/* =========================================
+  RUNTIME-MERGED BANK READ PATH
+  ========================================= */
+
+/**
+ * Runtime-merged problem bank: built-ins first, then accepted generated
+ * problems in stable accept order. Pure concat — never mutates either input,
+ * so PROBLEM_BANK keeps its reference identity and length.
+ */
+export const getMergedBank = (
+  builtin: readonly Problem[],
+  accepted: readonly Problem[]
+): Problem[] => builtin.concat(accepted)
+
+/**
+ * Store-derived merged bank for the UI (Sidebar list/counts, Topbar
+ * denominator/segments). PROBLEM_BANK is a static constant, so the merged
+ * result only changes when the accepted generated slice changes.
+ */
+export const useMergedBank = (): Problem[] => {
+  const generated = useAppStore((s) => s.generatedProblems)
+  return useMemo(() => getMergedBank(PROBLEM_BANK, generated), [generated])
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -164,7 +189,10 @@ export const useAppStore = create<AppState>()(
       cursorLine: 1,
       cursorCol: 1,
 
-      getProblem: (slug) => PROBLEM_BANK.find((p) => p.slug === slug),
+      getProblem: (slug) =>
+        getMergedBank(PROBLEM_BANK, get().generatedProblems).find(
+          (p) => p.slug === slug
+        ),
 
       getProblemState: (slug) => {
         const state = get().problems[slug]
