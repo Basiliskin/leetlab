@@ -785,4 +785,73 @@ export const PROBLEM_BANK: Problem[] = [
   ],
   desc:`<p>Implement <code>resolveFocusOrder(elements)</code>, reproducing the order in which the <strong>Tab</strong> key would visit a set of focusable elements — the algorithm any custom focus-trap or roving-tabindex widget has to get right.</p><ul><li>An element with <strong>tabIndex &lt; 0</strong> is not keyboard-focusable — exclude it.</li><li>Elements with <strong>tabIndex &gt; 0</strong> come first, visited in ascending order of their tabIndex; ties keep their original relative order.</li><li>Elements with <strong>tabIndex === 0</strong> or no <code>tabIndex</code> at all come after all of those, in their original relative order.</li></ul><p>Return the <code>id</code>s in the resulting focus order.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>[{id:'a'},{id:'b',tabIndex:2},{id:'c',tabIndex:1},{id:'d'}]</div><div><b>Output:</b>["c","b","a","d"]</div><div class="exp">c (1) then b (2) come first; a and d (no tabIndex) follow in original order.</div></div><div class="ex"><div><b>Input:</b>[{id:'a',tabIndex:-1},{id:'b'},{id:'c',tabIndex:3}]</div><div><b>Output:</b>["c","b"]</div><div class="exp">a is excluded entirely.</div></div><h4>Constraints</h4><ul><li>0 ≤ elements.length ≤ 1000</li><li>-10 ≤ tabIndex ≤ 10<sup>4</sup> when present</li><li>All ids are unique</li></ul>`
 }
+,
+{
+  slug:'readable-stream-pull-drain', num:8024, title:'Web Streams — Pull-Based Readable', difficulty:'Easy', tags:['Web Streams','Streaming'],
+  fnName:'buildAndDrain', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} chunks\n * @return {Promise<number[]>}\n */\nasync function buildAndDrain(chunks) {\n  \n}\n",
+    ts:"async function buildAndDrain(chunks: number[]): Promise<number[]> {\n  \n}\n",
+  },
+  tests:[
+    {in:[[1,2,3]], out:[1,2,3]}, {in:[[]], out:[]}, {in:[[5]], out:[5]},
+    {in:[[-1,0,7]], out:[-1,0,7]}, {in:[[9,8,7,6]], out:[9,8,7,6]}, {in:[[0,0]], out:[0,0]}
+  ],
+  hints:[
+    "The Web Streams API (ReadableStream / WritableStream / TransformStream) is available as a global in this sandbox, just like in a browser tab or a Node/Deno runtime — you don't need to import or mock anything.",
+    "Build the source with `new ReadableStream({ pull(controller) { ... } })` instead of `start`: the platform calls your pull() again each time it wants more data, which is the actual backpressure-aware production model (contrast with start(), which just dumps everything into the internal queue upfront). Track an index, enqueue one chunk per pull call, and call controller.close() once you're out of chunks. Then get a reader with stream.getReader() and loop `const {done, value} = await reader.read()` until done is true."
+  ],
+  desc:`<p>Implement <code>buildAndDrain(chunks)</code>: build a <code>ReadableStream</code> whose source hands out the numbers in <code>chunks</code> one at a time — using a <strong><code>pull</code></strong> callback, not <code>start</code> — then drain the stream back into a plain array using a reader, and return it.</p><p>The point of the exercise is the reading protocol itself: a pull-based source only produces the next value when the stream actually asks for it, which is how real backpressure-respecting sources (file reads, network sockets, DB cursors) are modeled with the Streams API.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>chunks = [1,2,3]</div><div><b>Output:</b>[1,2,3]</div></div><div class="ex"><div><b>Input:</b>chunks = []</div><div><b>Output:</b>[]</div><div class="exp">An empty source should close immediately without ever enqueuing.</div></div><h4>Constraints</h4><ul><li>0 ≤ chunks.length ≤ 1000</li></ul>`
+},
+{
+  slug:'transform-stream-pipeline', num:8025, title:'Web Streams — Transform Pipeline', difficulty:'Medium', tags:['Web Streams','Streaming'],
+  fnName:'doubleFilterPositive', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} nums\n * @return {Promise<number[]>}\n */\nasync function doubleFilterPositive(nums) {\n  \n}\n",
+    ts:"async function doubleFilterPositive(nums: number[]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,-2,3,0,4]], out:[2,6,8]}, {in:[[]], out:[]}, {in:[[-1,-2,-3]], out:[]},
+    {in:[[5]], out:[10]}, {in:[[0,0,0]], out:[]}, {in:[[3,-3,3]], out:[6,6]}
+  ],
+  hints:[
+    "A TransformStream is the streaming equivalent of .map()/.filter() chained together, except it processes one chunk at a time and never needs the whole array in memory: `controller.enqueue(x)` inside transform() emits zero, one, or many outputs per input chunk, so filtering is just calling enqueue conditionally.",
+    "Build a source ReadableStream from nums, create `new TransformStream({ transform(chunk, controller) { ... } })` that enqueues chunk*2 only when chunk > 0, and connect them with `source.pipeThrough(transform)`. The result is itself a ReadableStream — for await...of works directly on it (it's async-iterable) to collect the final array."
+  ],
+  desc:`<p>Implement <code>doubleFilterPositive(nums)</code> using a <strong><code>TransformStream</code></strong>: stream the numbers in <code>nums</code> through a transform stage that doubles each value but drops any value that isn't strictly positive, and collect what comes out the other end into an array.</p><p>Wire it up with <code>readableSource.pipeThrough(transformStage)</code> — one of the main reasons to reach for the Streams API instead of a hand-rolled async generator pipeline is that <code>pipeThrough</code>/<code>pipeTo</code> get backpressure between stages for free, with no extra code from you.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,-2,3,0,4]</div><div><b>Output:</b>[2,6,8]</div><div class="exp">-2 and 0 are dropped (not &gt; 0); 1→2, 3→6, 4→8.</div></div><h4>Constraints</h4><ul><li>0 ≤ nums.length ≤ 1000</li><li>-10<sup>4</sup> ≤ nums[i] ≤ 10<sup>4</sup></li></ul>`
+},
+{
+  slug:'tee-stream-fork', num:8026, title:'Web Streams — Forking With tee()', difficulty:'Medium', tags:['Web Streams','Streaming'],
+  fnName:'teeSumAndCount', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} nums\n * @return {Promise<[number, number]>}\n */\nasync function teeSumAndCount(nums) {\n  \n}\n",
+    ts:"async function teeSumAndCount(nums: number[]): Promise<[number, number]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,-2,3,4,-5]], out:[1,3]}, {in:[[]], out:[0,0]}, {in:[[1,1,1]], out:[3,3]},
+    {in:[[-1,-1]], out:[-2,0]}, {in:[[10]], out:[10,1]}, {in:[[2,-2,2,-2]], out:[0,2]}
+  ],
+  hints:[
+    "A ReadableStream can only be read by one consumer — once a chunk is delivered to a reader, it's gone. .tee() solves the 'two consumers need the same data' problem by returning two independent ReadableStream branches that each replay the full source.",
+    "Call `const [a, b] = source.tee()`, then read both branches concurrently — with `Promise.all`, not one after the other. If you fully drain branch a before even starting branch b, the runtime has to buffer everything b hasn't read yet internally, which defeats the point of streaming; reading them concurrently is what keeps memory bounded."
+  ],
+  desc:`<p>Implement <code>teeSumAndCount(nums)</code>: build a single <code>ReadableStream</code> over <code>nums</code>, then use <strong><code>.tee()</code></strong> to fork it into two independent branches so it can be consumed twice without re-reading the original source:</p><ul><li>one branch computes the <strong>sum</strong> of every value</li><li>the other branch counts how many values are <strong>strictly positive</strong></li></ul><p>Return <code>[sum, positiveCount]</code>. Consume both branches concurrently, not sequentially.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,-2,3,4,-5]</div><div><b>Output:</b>[1,3]</div><div class="exp">Sum = 1-2+3+4-5 = 1. Positive count = 3 (1, 3, 4).</div></div><div class="ex"><div><b>Input:</b>nums = []</div><div><b>Output:</b>[0,0]</div></div><h4>Constraints</h4><ul><li>0 ≤ nums.length ≤ 1000</li><li>-10<sup>4</sup> ≤ nums[i] ≤ 10<sup>4</sup></li></ul>`
+},
+{
+  slug:'writable-stream-error-propagation', num:8027, title:'Web Streams — pipeTo() Error Propagation', difficulty:'Hard', tags:['Web Streams','Streaming','Error Handling'],
+  fnName:'squareUntilError', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} nums\n * @return {Promise<number[]>}\n */\nasync function squareUntilError(nums) {\n  \n}\n",
+    ts:"async function squareUntilError(nums: number[]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,2,3]], out:[1,4,9]}, {in:[[1,-2,3]], out:[1]}, {in:[[]], out:[]},
+    {in:[[-5,1]], out:[]}, {in:[[4,9,-1,16]], out:[16,81]}, {in:[[2,2,2]], out:[4,4,4]}
+  ],
+  hints:[
+    "A WritableStream sink can reject a chunk by calling `controller.error(err)` inside write() — that immediately errors the whole stream. `readable.pipeTo(writable)` returns a Promise that rejects when that happens, and — critically — it stops pulling any further chunks from the source. A crashed downstream should not keep receiving data.",
+    "Build the source, then `new WritableStream({ write(chunk, controller) { ... } })`: for a negative chunk call controller.error(...) and return without recording anything; otherwise push chunk*chunk into a results array declared outside the sink. `await` the pipeTo call inside a try/catch (the rejection is expected once a negative number appears) and return whatever the sink had already collected before the error."
+  ],
+  desc:`<p>Implement <code>squareUntilError(nums)</code>: pipe a <code>ReadableStream</code> over <code>nums</code> into a <code>WritableStream</code> sink via <code>readable.pipeTo(writable)</code>. The sink squares every non-negative value it receives and collects it — but the moment it receives a <strong>negative</strong> value, it must error the stream instead of processing it, and no value after that point should ever reach the sink.</p><p>Return everything the sink collected before the stream errored (or the full squared array if no negative value ever appears).</p><p class="note">Judge protocol: <code>pipeTo()</code> rejects when the sink errors — that rejection is expected, not a bug; catch it and return the partial results.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,-2,3]</div><div><b>Output:</b>[1]</div><div class="exp">1 is squared and collected; -2 triggers the error before it's recorded; 3 is never even delivered to the sink.</div></div><div class="ex"><div><b>Input:</b>nums = [-5,1]</div><div><b>Output:</b>[]</div><div class="exp">The very first value is negative, so nothing is ever collected.</div></div><h4>Constraints</h4><ul><li>0 ≤ nums.length ≤ 1000</li><li>-10<sup>4</sup> ≤ nums[i] ≤ 10<sup>4</sup></li></ul>`
+}
 ];

@@ -403,7 +403,7 @@ describe('generated-bank-dedupe', () => {
 
     expect(result.ok).toBe(true)
     expect(useAppStore.getState().generatedProblems).toEqual([generatedProblem])
-    expect(PROBLEM_BANK.length).toBe(41)
+    expect(PROBLEM_BANK.length).toBe(45)
   })
 })
 
