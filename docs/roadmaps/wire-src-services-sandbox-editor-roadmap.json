@@ -1,0 +1,689 @@
+{
+  "task": "I added new services under src/services which must work and be accessible in the code editor's autocomplete, and when running problem solutions \u2014 must have full observability.",
+  "analysis": {
+    "objective": "Wire all five in-browser backend-emulation services under src/services (Redis, PostgreSQL, RabbitMQ, Kafka, BullMQ) into the CodeMirror problem-solution editor so they are callable from within sandboxed solution code, surfaced in autocomplete, and traced through structured log entries into the existing sandbox console/log stream.",
+    "successDefinition": "For every service Discovery found ready (all five, Kafka via its default AsyncLock path, SharedArrayBuffer path excluded): a global handle is reachable inside sandbox.worker.ts's Function execution; typing the identifier + '.' in CodeEditor.tsx surfaces real completions; every call emits a {l,t} trace entry into the existing console/log stream; a representative solution using each service executes correctly end-to-end in the real worker sandbox; any service Discovery finds blocked has an explicit stated disposition.",
+    "assumptions": [
+      "The five services' existing public classes/methods (RedisEmulation, the Postgres engine, RabbitMQ broker, Kafka client, BullMQ queue/worker) are the intended API surface to expose \u2014 no new business-facing API is being designed in this pass.",
+      "Autocomplete integration means extending the existing @codemirror/autocomplete + scopeCompletionSource mechanism, not building a new completion engine.",
+      "Global handles are injected per sandbox run (fresh instances) rather than persisted across problems; cross-run persistence semantics are whatever each service already implements internally.",
+      "'Full observability' is fully satisfied by structured trace entries into the existing console/log stream; no requirement for metrics, timing dashboards, or persisted trace storage beyond that stream.",
+      "Kafka's SharedArrayBuffer/Atomics Mutex requiring COOP/COEP headers is a known, pre-confirmed blocker condition for that one export, not something this task must silently solve by weakening the Kafka implementation's concurrency model \u2014 resolved by Discovery: the default Kafka path (AsyncLock) needs no SharedArrayBuffer at all."
+    ],
+    "risks": [
+      "Sandbox code runs via `new Function(...)` with no module system \u2014 wiring services in requires exposing them as pre-bound globals/params rather than importable modules.",
+      "BullMQ's barrel (src/services/BullMQ/index.ts) re-exports MutexLock, which \u2014 like Kafka's Mutex \u2014 depends on SharedArrayBuffer/Atomics and therefore COOP/COEP headers the app does not set; re-exporting the barrel verbatim risks silently reintroducing the same cross-origin-isolation dependency the plan explicitly excludes for Kafka.",
+      "Generating autocomplete completions from live TypeScript types (rather than hand-written lists) risks drift or incompleteness if the services' public APIs aren't cleanly separated from internal/private members.",
+      "Routing every service call through the existing `{l,t}` log stream could flood the Run output panel with high-frequency internal traffic, degrading the panel's usefulness unless call tracing is scoped to public API boundaries only.",
+      "Because these are 'from-scratch' emulations (MVCC engine, Atomics-based mutex, AsyncLock broker), correctness bugs already latent in the services themselves could surface only once real solution code exercises them under the sandbox's constraints.",
+      "Instrumenting every service call for tracing without capping payload size or call volume risks an unbounded log stream if a solution enters a tight loop calling a service \u2014 this should be constrained (e.g. truncation/rate-limiting) even though no explicit cap was specified in the acceptance criteria.",
+      "Four services independently export an `AsyncLock` symbol (postgresql.service.ts, RabbitMQ.service.ts, BullMQ's barrel, and Kafka's non-excluded default path) \u2014 aggregating them under one module risks a name collision unless imports are deliberately aliased."
+    ],
+    "outOfScope": [
+      "A dedicated observability UI panel (charts, per-service dashboards, trace viewers) \u2014 explicitly excluded by the repo owner's clarification; tracing goes into the existing console stream only.",
+      "Persisting service state across separate problem runs or across browser sessions \u2014 each service's existing persistence behavior is left as-is, and fresh instances are constructed per run.",
+      "Solving Kafka's (or BullMQ's) COOP/COEP requirement by changing global app-wide HTTP headers or hosting configuration \u2014 Discovery confirmed the default AsyncLock-based paths avoid this entirely, so SharedArrayBuffer-dependent exports (Kafka's Mutex/SharedMemoryOffsetStorage, BullMQ's MutexLock) are excluded rather than enabled.",
+      "Adding new backend services beyond the five already present in src/services.",
+      "Rewriting or redesigning the services' internal architecture beyond what's needed to expose and trace their public API.",
+      "Authentication, authorization, or multi-user access control for the services \u2014 leetlab is client-side-only with no backend.",
+      "Building exhaustive automated tests for every service's internal correctness (e.g. full MVCC transaction-isolation test suite) \u2014 the success bar is representative solution code executing correctly end to end.",
+      "Adding a `@services` path alias to tsconfig/vite config \u2014 relative imports already work and are lower-risk than a two-file config change for a naming convenience only."
+    ],
+    "domainShape": "technical",
+    "domainShapeReason": "The objective is about wiring pre-built infrastructure emulations into an editor's autocomplete and a sandboxed execution/tracing pipeline \u2014 this is developer-tooling/runtime machinery, not a business domain of orders, users, or workflows a domain expert would recognize.",
+    "ubiquitousLanguage": [
+      {
+        "term": "sandbox.worker.ts",
+        "meaning": "The Web Worker that executes user solution code via `new Function(...)` and produces the `{l,t}` log stream"
+      },
+      {
+        "term": "scopeCompletionSource",
+        "meaning": "The CodeMirror/@codemirror/autocomplete mechanism used to surface JS-scope-aware completions in the editor"
+      },
+      {
+        "term": "service handle",
+        "meaning": "The global identifier (e.g. redis, queue) injected into the sandbox execution scope that solution code calls directly"
+      },
+      {
+        "term": "structured trace entry",
+        "meaning": "A `{l, t}` log-shaped record emitted per service call, appended to the same stream LastRunCase/the Run panel already consumes"
+      },
+      {
+        "term": "LastRunCase",
+        "meaning": "The existing mechanism surfacing the console/log output of the most recent test-case run in the Run output panel"
+      },
+      {
+        "term": "cross-origin isolation (COOP/COEP)",
+        "meaning": "The browser security headers required for SharedArrayBuffer/Atomics to work, blocking Kafka's Mutex and BullMQ's MutexLock implementations"
+      },
+      {
+        "term": "in-memory emulation",
+        "meaning": "A self-contained, dependency-free TypeScript reimplementation of a backend infrastructure component running entirely in-browser"
+      },
+      {
+        "term": "services aggregator",
+        "meaning": "The single new module that is the source of truth for the 5 service handles' names and constructors, consumed by both the worker and the editor"
+      }
+    ]
+  },
+  "discoveryFindings": [
+    {
+      "area": "CodeEditor extension wiring",
+      "finding": "CodeEditor.tsx already wires `javascriptLanguage.data.of({ autocomplete: scopeCompletionSource(globalThis) })`. globalThis here is the MAIN-THREAD window, not the sandbox worker. Autocomplete is purely JS-value reflection, no .d.ts-driven completion exists.",
+      "filePath": "src/components/CodeEditor.tsx",
+      "implication": "A new completion source must be added as an additional `languageData.autocomplete` facet entry (CodeMirror merges multiple), not a replacement; the main-thread globalThis and the sandbox worker's scope are two separate problems that both need solving."
+    },
+    {
+      "area": "Sandbox execution mechanism",
+      "finding": "sandbox.worker.ts runs code via `new Function('console','module','exports','require','process', code)` then `factory(cns, moduleObj, moduleObj.exports, req, proc)`. No existing hook for extra globals.",
+      "filePath": "src/infrastructure/sandbox.worker.ts",
+      "implication": "Adding a services global means adding a new named parameter to BOTH the Function signature and its call-site argument, kept in sync. require()'s throw-behavior must remain untouched."
+    },
+    {
+      "area": "Worker bundling of src/services",
+      "finding": "Vite's `?worker` import fully bundles the worker's module graph including whatever it imports; sandbox.worker.ts can `import` from src/services directly, no separate build step needed.",
+      "filePath": "src/infrastructure/sandbox.worker.ts",
+      "implication": "No custom bundler work needed \u2014 plain ESM imports suffice, once each service is confirmed Worker-safe."
+    },
+    {
+      "area": "Redis service statefulness",
+      "finding": "Each SandboxWorker is a fresh instance terminated after every run (useRunCode.ts calls worker.terminate()); RedisEmulation uses BroadcastChannel (fine in Workers) but state does NOT persist across separate 'Run' clicks unless a persistence/RPC strategy is deliberately added.",
+      "filePath": "src/services/redis-service/redis.service.ts",
+      "implication": "Per-run-fresh-instance is an acceptable, explicit default \u2014 phases must instantiate services fresh per worker run, not attempt to persist state."
+    },
+    {
+      "area": "Kafka SharedArrayBuffer is opt-in only",
+      "finding": "Kafka's default path (Broker/Topic/Consumer/InMemoryOffsetStorage via AsyncLock) needs NO SharedArrayBuffer/COOP/COEP. Only `Mutex`/`SharedMemoryOffsetStorage` require SharedArrayBuffer, and those are separate, optional exports. No COOP/COEP config exists anywhere in the repo.",
+      "filePath": "src/services/kafka-service/kafka.service.ts",
+      "implication": "Kafka does NOT need to be deferred \u2014 wire its default AsyncLock-based API only; explicitly exclude SharedMemoryOffsetStorage/Mutex-based exports from the sandbox/autocomplete surface as a named exclusion. The same SharedArrayBuffer pattern is duplicated in BullMQ's infrastructure/locks.ts MutexLock \u2014 the aggregator phase must apply the same exclusion there, not just to Kafka."
+    },
+    {
+      "area": "PostgreSQL/RabbitMQ portability",
+      "finding": "Both use only Promise/Map/Set/crypto.randomUUID \u2014 zero Node-only APIs, safe to import into a Worker as-is.",
+      "filePath": "src/services/postgresql-service/postgresql.service.ts",
+      "implication": "No portability work needed for these two; straight import."
+    },
+    {
+      "area": "BullMQ barrel inconsistency",
+      "finding": "BullMQ/index.ts is the only service with an existing barrel file (exports Job, Queue, Worker, QueueEvents, AsyncLock, MutexLock, ILock, InMemoryJobRepository, IJobRepository, TypedEventEmitter, plus types). The other four services have no barrel; must import from concrete file paths. No src/services aggregator/index exists yet.",
+      "filePath": "src/services/BullMQ/index.ts",
+      "implication": "A uniform way to expose the 5 service handles needs a NEW small aggregator module \u2014 shared foundation work for an early, zero-dependency phase. Because the barrel includes the SharedArrayBuffer-dependent `MutexLock`, the aggregator must re-export BullMQ's barrel selectively (or alias/omit MutexLock), not via a blind `export *`, to stay consistent with the Kafka exclusion."
+    },
+    {
+      "area": "Example files are reference-only",
+      "finding": "Each service has an *.example.ts/*.sample.ts file demonstrating usage, none wired into build/test; BullMQ's example even uses top-level await so it can't run as-is via new Function.",
+      "filePath": "src/services/BullMQ/bullmq.exmaple.ts",
+      "implication": "Treat as documentation/reference for API shape only; do not import or execute these files from production wiring."
+    },
+    {
+      "area": "No ambient .d.ts mechanism for TS-mode linting",
+      "finding": "tsCheck.ts/tsCompiler.ts run a real TS language service (from CDN) for linting only, with a single virtual file `input.ts` and no mechanism to inject ambient declarations for new globals like `redis`.",
+      "filePath": "src/infrastructure/tsCheck.ts",
+      "implication": "Extending tsCheck's host to serve a synthetic ambient .d.ts is a genuinely separate integration point from scopeCompletionSource-based autocomplete \u2014 both must be wired for a consistent developer experience."
+    },
+    {
+      "area": "Log/trace conduit shape",
+      "finding": "The log entry shape is exactly `{ l: string; t: string }` flowing through the existing console/postMessage pipeline (mkLog/cns in sandbox.worker.ts, WorkerMsg 'console' type in useRunCode.ts, LastRun.logs in store.ts). No structured/object-log support exists.",
+      "filePath": "src/infrastructure/store.ts",
+      "implication": "Trace entries MUST reuse the exact existing console pipeline (formatted string like `[redis] SET foo bar -> OK`), NOT a new WorkerMsg variant."
+    },
+    {
+      "area": "No @services path alias",
+      "finding": "tsconfig.app.json and vite.config.ts define `@`, `@domain`, `@infra`, `@components` but no `@services` alias; both files list the same 4 aliases in parallel and must be edited in lockstep if a new one is added.",
+      "filePath": "vite.config.ts",
+      "implication": "Adding a `@services` alias is optional convenience, not required \u2014 relative imports work fine and are lower-risk; deferred."
+    },
+    {
+      "area": "No backend, no COOP/COEP config anywhere",
+      "finding": "Pure static Vite+React SPA, no server framework, no vercel.json/netlify.toml, no header-injection middleware anywhere.",
+      "filePath": "package.json",
+      "implication": "Confirms nothing server-side is available or needed; reinforces that SharedArrayBuffer-dependent variants (Kafka's Mutex/SharedMemoryOffsetStorage, BullMQ's MutexLock) are correctly excluded rather than attempted."
+    }
+  ],
+  "requiredMaterials": [
+    {
+      "name": "CodeMirror autocomplete API semantics (CompletionSource composition, Completion.type/detail/apply fields)",
+      "kind": "knowledge",
+      "whyNeeded": "Need to confirm whether/how multiple completion sources combine on a single language.data facet before composing a new completion source alongside scopeCompletionSource(globalThis).",
+      "acquisitionNote": "Consult @codemirror/autocomplete's installed type declarations (node_modules/@codemirror/autocomplete/dist/index.d.ts) or published docs."
+    }
+  ],
+  "phases": [
+    {
+      "id": "services-aggregator",
+      "order": 0,
+      "name": "Introduce a sandbox service-bindings aggregator",
+      "goal": "Create a single new module that is the one source of truth for 'what are the 5 service handles and their exposed names', importing each service's public API from concrete file paths and re-exporting BullMQ's barrel members selectively, explicitly excluding both Kafka's and BullMQ's SharedArrayBuffer-dependent exports (Mutex/SharedMemoryOffsetStorage, MutexLock).",
+      "boundedContext": "sandbox service bindings",
+      "layer": "infrastructure",
+      "blastRadius": "small",
+      "inputs": [
+        "src/services/redis-service/redis.service.ts",
+        "src/services/postgresql-service/postgresql.service.ts",
+        "src/services/rabbit-mq-service/RabbitMQ.service.ts",
+        "src/services/kafka-service/kafka.service.ts (AsyncLock path only)",
+        "src/services/BullMQ/index.ts (selective re-export, excluding MutexLock)"
+      ],
+      "expectedResult": "A new module (src/services/sandbox-bindings.ts) exporting a factory that constructs a fresh instance of each of the 5 services plus a name->constructor map, with Kafka's Mutex/SharedMemoryOffsetStorage and BullMQ's MutexLock explicitly omitted and commented as excluded by design; no internal AsyncLock symbol collision across the 4 services that independently export one.",
+      "dependsOn": [],
+      "rubric": [
+        {
+          "id": "no-export-name-collisions",
+          "label": "Handle and symbol names do not collide across services",
+          "ruleStatement": "The aggregator module must compile with no duplicate top-level identifiers, even though AsyncLock is independently exported by postgresql.service.ts, RabbitMQ.service.ts, and BullMQ's index.ts barrel.",
+          "passCriteria": [
+            "tsc/build of the new module produces zero 'duplicate identifier' or 'export ... conflicts with' errors",
+            "Each service's internal support classes (e.g. AsyncLock, ILock, IStorage) are imported with explicit rename aliases or kept unexported from the aggregator's public surface",
+            "The module exports exactly one identifier per intended service handle, with no ambiguous re-export"
+          ],
+          "failureExamples": [
+            "`export { AsyncLock } from './postgresql-service/postgresql.service'` and `export { AsyncLock } from './rabbit-mq-service/RabbitMQ.service'` both present, causing a redeclaration error or one silently shadowing the other",
+            "The name->constructor map has fewer than 5 keys because two services' handles collided and one overwrote the other at runtime"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "exact-five-service-inventory",
+          "label": "Name-to-constructor map contains exactly the 5 intended services, imported from concrete paths",
+          "ruleStatement": "The exported map/factory must reference Redis, PostgreSQL, RabbitMQ, Kafka, and BullMQ \u2014 no more, no fewer \u2014 each imported from its concrete file except BullMQ which uses its existing index.ts.",
+          "passCriteria": [
+            "Map/factory has exactly 5 entries, each traceable to one of the 5 listed input files",
+            "No new index.ts/barrel file was created under redis-service, postgresql-service, rabbit-mq-service, or kafka-service to satisfy this phase",
+            "Import specifiers for the four un-barreled services point directly at their concrete .ts files, not a directory import"
+          ],
+          "failureExamples": [
+            "A 6th unrelated service or a duplicate entry appears in the map",
+            "A new src/services/rabbit-mq-service/index.ts was added to make the import 'cleaner', violating the no-new-barrels constraint",
+            "PostgreSQL is imported via a directory import that silently resolves to an index file that doesn't exist yet, breaking the build"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "shared-array-buffer-exports-excluded",
+          "label": "All SharedArrayBuffer-dependent exports are excluded, not just Kafka's",
+          "ruleStatement": "Neither Kafka's Mutex/SharedMemoryOffsetStorage nor BullMQ's MutexLock may appear anywhere in the aggregator's exports; both omissions must be marked with an explicit 'excluded by design' comment naming the SharedArrayBuffer/COOP-COEP reason.",
+          "passCriteria": [
+            "Grep for 'Mutex' and 'SharedMemoryOffsetStorage' in the new module returns zero export statements referencing them",
+            "A comment near the Kafka import AND a comment near the BullMQ import each explicitly state these exclusions and why",
+            "BullMQ's re-export is a selective named re-export (not `export * from './BullMQ'`) so MutexLock cannot leak through silently",
+            "Kafka's AsyncLock (not Mutex) and BullMQ's AsyncLock/plain locking (not MutexLock) are the lock primitives actually reachable"
+          ],
+          "failureExamples": [
+            "`export * from './BullMQ'` is used, silently re-exporting MutexLock with no comment at all",
+            "`export { Mutex, SharedMemoryOffsetStorage } from './kafka-service/kafka.service'` is present, reintroducing a COOP/COEP dependency"
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "bullmq-barrel-fidelity",
+          "label": "BullMQ re-exports (excluding MutexLock) match the existing barrel one-to-one",
+          "ruleStatement": "Every member re-exported for BullMQ, other than the excluded MutexLock, must come from src/services/BullMQ/index.ts as-is; no member is renamed, dropped, or fabricated beyond what that barrel already exposes.",
+          "passCriteria": [
+            "Every BullMQ symbol used by the aggregator (Job, Queue, Worker, QueueEvents, AsyncLock, InMemoryJobRepository, TypedEventEmitter, types) traces back to BullMQ/index.ts's own export list",
+            "No BullMQ-internal (non-barrel-exported) file is imported directly, bypassing the existing barrel",
+            "MutexLock is the only barrel member deliberately excluded, per the shared-array-buffer-exports-excluded dimension above"
+          ],
+          "failureExamples": [
+            "Aggregator imports `Worker` directly from `./BullMQ/application/worker` instead of from the barrel",
+            "A BullMQ type is renamed on re-export in a way that doesn't match what the barrel calls it"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "factory-yields-fresh-isolated-instances",
+          "label": "The factory constructs fresh, non-shared instances on each call",
+          "ruleStatement": "Calling the exported factory function twice must produce two independent sets of service instances with no shared mutable state, so repeated sandbox runs never leak state or cross-contaminate.",
+          "passCriteria": [
+            "Factory function body calls `new` (or an equivalent constructor invocation) for each of the 5 services inside the function, not against a module-level singleton captured in closure",
+            "Two sequential invocations of the factory produce object instances that fail a reference-equality check against each other",
+            "No service instance is memoized/cached at module scope in a way that would persist between separate solution runs"
+          ],
+          "failureExamples": [
+            "The module does `const redis = new RedisEmulation(); export const makeBindings = () => ({ redis, ... })`, so every sandbox run shares the same Redis state",
+            "Factory returns the same PostgreSQL Table/Transaction objects across calls, making solution runs non-repeatable"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is the four-way AsyncLock export collision or a `export *` on the BullMQ barrel silently leaking MutexLock back in \u2014 fix by aliasing each service's internal lock import and using a selective named re-export for BullMQ that explicitly omits MutexLock."
+    },
+    {
+      "id": "worker-service-injection",
+      "order": 1,
+      "name": "Inject fresh per-run service handles into sandbox.worker.ts execution scope",
+      "goal": "Wire the aggregator from services-aggregator into sandbox.worker.ts's Function-based execution so each of the 5 service handles is a named global available to user solution code, instantiated fresh per worker run (no cross-run persistence), without altering require()'s existing throw behavior.",
+      "boundedContext": "sandbox execution",
+      "layer": "infrastructure",
+      "blastRadius": "medium",
+      "inputs": [
+        "src/infrastructure/sandbox.worker.ts",
+        "output of services-aggregator (sandbox-bindings module)"
+      ],
+      "expectedResult": "`new Function('console','module','exports','require','process','redis','pg','rabbitmq','kafka','queue', code)` (naming illustrative) with matching call-site arguments, each argument a freshly constructed service instance created at the top of the onmessage handler for every run; require() semantics unchanged.",
+      "dependsOn": [
+        "services-aggregator"
+      ],
+      "rubric": [
+        {
+          "id": "handles-present-and-live",
+          "label": "All five service handles are present and functional",
+          "ruleStatement": "The Function factory in sandbox.worker.ts is invoked with all five service parameter names bound to real, working instances (not stubs/undefined), and user code referencing any of them by name executes without ReferenceError.",
+          "passCriteria": [
+            "grep of sandbox.worker.ts shows all 5 new parameter names in both the new Function(...) signature and the matching call-site arguments, in the same order",
+            "Each argument passed at the call site is a `new <Service>()`-style construction resolvable to the services-aggregator output, not a literal object literal or comment stub",
+            "A manual/scripted test run whose solution code calls a method on each of the 5 handles completes without ReferenceError or TypeError for undefined handle",
+            "TypeScript compiles sandbox.worker.ts with no `any`-suppressed handle types"
+          ],
+          "failureExamples": [
+            "Only redis and pg are wired; kafka/rabbitmq/queue are still undefined in the Function scope",
+            "Handles are passed as shared module-level singletons imported once at worker startup rather than constructed inside the onmessage handler",
+            "A handle is passed as a bare object literal instead of the real service instance"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "no-cross-run-persistence",
+          "label": "Fresh instances per run, no state leakage across executions",
+          "ruleStatement": "Every service instance is constructed inside self.onmessage (or a function called fresh from it) for each run, and no state written by one run is observable by a subsequent run in the same worker.",
+          "passCriteria": [
+            "The 5 `new <Service>()` construction calls appear textually inside the onmessage handler body (or a helper it calls per-invocation), not at module top-level or in a variable declared outside onmessage",
+            "Two sequential postMessage runs to the same live worker, where run 1 writes state to a handle and run 2 reads it, show run 2 observing no value / initial state",
+            "No handle constructor result is cached in a module-scope variable, WeakMap, or closure that survives across onmessage invocations"
+          ],
+          "failureExamples": [
+            "const redisInstance = new RedisService() declared at worker module top level and reused across all onmessage calls",
+            "Instances are constructed lazily on first access and memoized in a module-level cache keyed by nothing"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "require-behavior-unchanged",
+          "label": "require() still throws exactly as before",
+          "ruleStatement": "The existing require() semantics (throwing 'require() is not available in sandbox' for any call) are preserved unmodified by the service-injection change.",
+          "passCriteria": [
+            "The req function/parameter in sandbox.worker.ts is unchanged: still throws the same Error message on any invocation, regardless of arguments",
+            "None of the 5 new service handles are exposed via or routed through require() \u2014 they are separate named Function parameters, not require('redis') style resolution",
+            "A test run whose solution code calls require('anything') still receives the original error and does not instead resolve to a service handle"
+          ],
+          "failureExamples": [
+            "require() is repurposed to resolve 'redis'/'pg'/etc. module names to service instances, silently changing its contract",
+            "The require() throw message or behavior is altered without being asked for"
+          ],
+          "minScore": 9
+        }
+      ],
+      "healerHint": "The most likely failure is instances built at module top-level (or memoized) instead of freshly inside self.onmessage, causing state to leak across runs \u2014 fix by moving all 5 `new <Service>()` constructions to the first lines of the onmessage handler body."
+    },
+    {
+      "id": "service-call-tracing",
+      "order": 2,
+      "name": "Emit structured {l,t} trace entries for every service call",
+      "goal": "Wrap each service instance's public methods (or add lightweight tracing at the boundary) so every call produces a formatted log line pushed through the existing cns/mkLog console pipeline already used by sandbox.worker.ts, matching the exact {l,t} shape and the existing console/postMessage conduit \u2014 no new WorkerMsg variant.",
+      "boundedContext": "sandbox execution",
+      "layer": "infrastructure",
+      "blastRadius": "medium",
+      "inputs": [
+        "src/infrastructure/sandbox.worker.ts (mkLog/cns)",
+        "fresh service instances from worker-service-injection"
+      ],
+      "expectedResult": "Every call to a service handle (redis.get, queue.add, etc.) produces a formatted trace string (e.g. `[redis] SET foo bar -> OK`) delivered as an {l,t} entry into the same stream useRunCode.ts/store.ts already consume, verified by a manual run showing entries in LastRunCase output.",
+      "dependsOn": [
+        "worker-service-injection"
+      ],
+      "rubric": [
+        {
+          "id": "call-produces-trace-entry",
+          "label": "Every service call emits a trace entry",
+          "ruleStatement": "Each public method invocation on redis, queue, and the other four service handles must push exactly one {l,t} entry through the existing mkLog/cns pipeline into the same stream useRunCode.ts/store.ts consume.",
+          "passCriteria": [
+            "Grep of the service wrapper/proxy code shows every public method reachable from sandbox scope is wrapped (no method invoked directly without passing through a trace boundary)",
+            "A manual run of a solution calling redis.get, queue.add, and at least one method from each of the other three services shows one {l,t} entry per call in LastRunCase output, in call order",
+            "Trace entries appear via the existing console/postMessage conduit \u2014 no new WorkerMsg variant added to the worker message union"
+          ],
+          "failureExamples": [
+            "queue.add produces no visible entry in LastRunCase even though the call succeeds",
+            "Only redis and postgres are wrapped; rabbitmq/kafka/bullmq calls run silently",
+            "A new WorkerMsg type (e.g. 'service-trace') was added instead of reusing mkLog/cns"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "trace-format-fidelity",
+          "label": "Trace strings match the documented {l,t} shape and format",
+          "ruleStatement": "Each emitted entry must be a valid {l,t} object (matching mkLog's field shape/types) with a formatted string of the form `[service] OPERATION args -> result`.",
+          "passCriteria": [
+            "Sampled trace strings from a manual run match the pattern `[<service>] <OP> <args> -> <result>`",
+            "The `l` level field on traced entries matches the type mkLog/cns already uses elsewhere in sandbox.worker.ts (no ad-hoc level values)",
+            "Non-string or malformed args (objects, undefined, errors) are stringified without throwing or emitting `[object Object]`"
+          ],
+          "failureExamples": [
+            "Entry renders as `[object Object]` for a queue.add call with an object payload",
+            "Trace level field is a new/undecided value not present anywhere else in mkLog usage",
+            "Output omits the arrow/result segment"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "error-path-traced",
+          "label": "Failed/rejected service calls still produce a trace entry",
+          "ruleStatement": "When a wrapped method throws or rejects, the boundary must still emit a trace entry reflecting the failure before/instead of the call silently disappearing from the log stream.",
+          "passCriteria": [
+            "Manual run of a call expected to fail shows a trace entry noting failure, not just an unhandled console.error",
+            "The wrapping boundary uses try/catch or .catch semantics that re-throw after tracing (does not swallow the original error)",
+            "Solution code that depends on the thrown error still observes it"
+          ],
+          "failureExamples": [
+            "A rejected promise from bullmq disappears with no log entry and only a generic uncaught-exception message",
+            "The wrapper swallows the error to log it, so solution code that does try/catch around the call never sees the exception"
+          ],
+          "minScore": 6
+        },
+        {
+          "id": "non-invasive-wrapping",
+          "label": "Tracing wraps calls without mutating service state or call semantics",
+          "ruleStatement": "Adding tracing must not change the return value, timing/ordering, or internal state of the underlying in-memory service emulation \u2014 it is purely an observability boundary.",
+          "passCriteria": [
+            "A call's return value/type is identical whether tracing is enabled or the raw method is invoked directly",
+            "No trace entry is emitted twice for a single call (no double-wrapping from nested proxies or repeated instrumentation)",
+            "Sync methods remain sync and async methods remain async after wrapping"
+          ],
+          "failureExamples": [
+            "queue.add now returns a Promise-wrapped value where it previously returned synchronously",
+            "Two identical trace lines appear for one redis.get call because both the service class and an outer proxy independently log it"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "Most likely failure is partial wrapping \u2014 only 1-2 of the five services actually get instrumented before the executor calls it done, so the fastest fix is a single generic wrap-all-public-methods helper applied uniformly to all five service instances at construction time rather than five bespoke wrappers."
+    },
+    {
+      "id": "editor-autocomplete-source",
+      "order": 3,
+      "name": "Surface service handle names and members in CodeEditor autocomplete",
+      "goal": "Add a second completion source (composed alongside the existing scopeCompletionSource(globalThis) entry in javascriptLanguage.data.of) that offers the 5 service handle identifiers at top level and their real member names/signatures when the identifier + '.' is typed, sourced from the same aggregator module used by the worker so names never drift.",
+      "boundedContext": "editor interface",
+      "layer": "interface",
+      "blastRadius": "small",
+      "inputs": [
+        "src/components/CodeEditor.tsx",
+        "output of services-aggregator (names/shape)",
+        "@codemirror/autocomplete CompletionSource composition semantics"
+      ],
+      "expectedResult": "Typing `redis.` (etc. for all 5 handles) in the CodeEditor surfaces real completions for that service's public methods; existing scope-based completions for other identifiers remain unaffected.",
+      "dependsOn": [
+        "services-aggregator"
+      ],
+      "rubric": [
+        {
+          "id": "all-five-handles-complete",
+          "label": "All five service handles produce top-level and member completions",
+          "ruleStatement": "For each of the 5 handles, typing the bare identifier offers it as a top-level completion, and typing '<handle>.' offers its real public method names sourced from the aggregator, not a hardcoded list.",
+          "passCriteria": [
+            "A completion source registered in javascriptLanguage.data.of returns entries for all 5 handle identifiers when queried at top level",
+            "For each handle, typing '<handle>.' yields a completion list whose labels match the actual runtime method names exported by that service in the aggregator module",
+            "The completion list is generated from imported types/values of the aggregator module, not a separate manually maintained string array"
+          ],
+          "failureExamples": [
+            "Only 3 of 5 handles show member completions; kafka. and queue. return nothing",
+            "Autocomplete list for redis. includes a method that doesn't exist on the actual redis service export",
+            "Completions are a static array of strings typed by hand in CodeEditor.tsx, disconnected from the aggregator"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "name-drift-safety",
+          "label": "Completion source is structurally tied to the aggregator, immune to drift",
+          "ruleStatement": "The autocomplete data (handle names, method names, signatures) must be derived from the same aggregator module the worker uses to inject handles into sandbox scope, so a change to the aggregator's exports is reflected in autocomplete without a second manual edit.",
+          "passCriteria": [
+            "grep shows CodeEditor.tsx (or a completion-source module it imports) importing from the same aggregator path used by src/infrastructure/sandbox.worker.ts",
+            "Renaming or removing a method on one service in the aggregator causes a TypeScript error or an automatically updated completion list in the editor code \u2014 not a silent stale entry",
+            "No duplicate literal list of the 5 service method names exists elsewhere in the editor code that could diverge from the aggregator"
+          ],
+          "failureExamples": [
+            "CodeEditor.tsx defines its own hand-written method list instead of importing from the aggregator",
+            "The aggregator gains a new method but autocomplete still shows the old method set with no build-time link forcing an update"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "existing-scope-completion-unaffected",
+          "label": "Original scope-based completion source keeps working for non-service identifiers",
+          "ruleStatement": "The new completion source is composed alongside scopeCompletionSource(globalThis), not in place of it, and does not suppress or corrupt completions for unrelated identifiers.",
+          "passCriteria": [
+            "javascriptLanguage.data.of registers a list/array containing both scopeCompletionSource(globalThis) and the new service completion source",
+            "Typing a locally-declared variable name or a JS global (e.g. 'Math.', 'console.') still yields the original scope-based completions after the change",
+            "The new source returns null/no-match for contexts unrelated to the 5 handle identifiers, rather than short-circuiting the whole autocomplete pipeline"
+          ],
+          "failureExamples": [
+            "scopeCompletionSource(globalThis) is deleted or replaced outright",
+            "The new completion source is registered as an `override` config that replaces the array-based composition",
+            "Typing 'Math.' now returns no completions because the new source always returns a result object even when empty"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "signature-and-doc-fidelity",
+          "label": "Member completions carry accurate type/signature info, not just bare names",
+          "ruleStatement": "Each member completion for a service handle exposes at minimum a `type` (function/method) and, where practically derivable from the aggregator's TS types, a signature/detail string.",
+          "passCriteria": [
+            "Inspecting the Completion objects returned by the new source shows non-empty `type` field for methods",
+            "At least a sample of completions show parameter info in `detail` or `info`, sourced from the aggregator's TS signatures rather than hand-written strings"
+          ],
+          "failureExamples": [
+            "All completions are plain strings with no `type`, indistinguishable from generic scope completions",
+            "detail/info fields are hardcoded placeholder text identical across every entry"
+          ],
+          "minScore": 6
+        }
+      ],
+      "healerHint": "Most likely failure is registering the new source as a lone replacement (or an `override: true` config) instead of adding it alongside scopeCompletionSource(globalThis) in the same array \u2014 fix by composing both sources in one autocomplete config array so CodeMirror tries each in turn."
+    },
+    {
+      "id": "tscheck-ambient-declarations",
+      "order": 4,
+      "name": "Serve ambient .d.ts declarations for the 5 service globals to TS-mode linting",
+      "goal": "Extend tsCheck.ts/tsCompiler.ts's virtual TS language service host to additionally serve a synthetic ambient declaration file declaring the 5 service globals and their types, so solution code referencing them does not show false 'Cannot find name' diagnostics.",
+      "boundedContext": "editor interface / TS linting",
+      "layer": "interface",
+      "blastRadius": "small",
+      "inputs": [
+        "src/infrastructure/tsCheck.ts",
+        "src/infrastructure/tsCompiler.ts",
+        "output of services-aggregator (types)"
+      ],
+      "expectedResult": "A virtual ambient .d.ts file registered alongside the existing single virtual file `input.ts` in the TS language-service host, eliminating red-squiggle 'Cannot find name' errors for the 5 service identifiers used in solution code.",
+      "dependsOn": [
+        "services-aggregator"
+      ],
+      "rubric": [
+        {
+          "id": "ambient-file-fully-wired-into-host",
+          "label": "Ambient .d.ts is registered at every host touchpoint",
+          "ruleStatement": "The synthetic ambient declaration file must be returned by getScriptFileNames and correctly served by getScriptSnapshot, fileExists, and readFile \u2014 the same four host methods that currently special-case the literal string 'input.ts'.",
+          "passCriteria": [
+            "getScriptFileNames() returns an array containing both 'input.ts' and the new ambient file id",
+            "getScriptSnapshot(name), fileExists(name), and readFile(name) each have a branch matching the ambient file id that returns non-undefined content for it",
+            "the ambient file id does not collide with 'input.ts' or any lib.*.d.ts cache key used by normLibName"
+          ],
+          "failureExamples": [
+            "getScriptFileNames() still returns only ['input.ts'], so the language service never loads the ambient globals even though getScriptSnapshot knows how to serve them",
+            "fileExists() returns true for the ambient file but readFile() falls through to undefined, causing TS to silently drop the file from the program"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "globals-visible-in-global-scope-not-module-scope",
+          "label": "Declarations attach to the true global scope",
+          "ruleStatement": "The ambient file must declare the 5 service identifiers as global bindings visible to input.ts without any import, either by having no top-level import/export or by wrapping declarations in `declare global { ... }`.",
+          "passCriteria": [
+            "running checkCode() on sample solution code that references all 5 identifiers with no imports produces zero TS2304 'Cannot find name' diagnostics",
+            "if the ambient file contains any top-level import/export statement, all declarations are inside a `declare global { ... }` block",
+            "the file has no `export {}` or module-only markers that would silently scope the declarations away from input.ts"
+          ],
+          "failureExamples": [
+            "the ambient file uses `export const redis: RedisClient` at top level, which makes it a module and hides `redis` from global scope, so TS2304 still fires",
+            "declarations sit outside `declare global`, compiling fine on its own but invisible to input.ts"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "five-globals-typed-not-widened-to-any",
+          "label": "All 5 service handles carry real, non-any types",
+          "ruleStatement": "Each of the 5 service globals must be declared with a concrete type sourced from services-aggregator's exported types, not `any`/`unknown`, so autocomplete and type errors on misuse both work.",
+          "passCriteria": [
+            "the ambient file declares exactly 5 `declare const`/`declare let` bindings, one per service, each annotated with an imported or inlined interface \u2014 none typed as `any`",
+            "running checkCode on code that calls a real method on each handle produces no diagnostics",
+            "running checkCode on code that calls a nonexistent method on one handle still produces a TS2339 diagnostic, proving the type isn't `any`"
+          ],
+          "failureExamples": [
+            "all 5 identifiers are declared as `declare const redis: any` \u2014 false positives disappear but so does all real type checking",
+            "only 3 of the 5 services get ambient declarations, leaving 2 still flagged as 'Cannot find name'"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "degrades-safely-if-ambient-source-unavailable",
+          "label": "Host stays functional if the ambient declaration source is missing or malformed",
+          "ruleStatement": "If services-aggregator's type output is unavailable, empty, or fails to load, checkCode must still run and diagnose ordinary code correctly rather than throwing or corrupting the language service for unrelated diagnostics.",
+          "passCriteria": [
+            "wrapping the ambient-file content generation in a try/catch so a failure to build/import the ambient declarations does not throw out of checkCode()",
+            "when the ambient file is empty or absent, checkCode still returns correct diagnostics for code that doesn't reference the 5 globals",
+            "re-running checkCode multiple times with unchanged code returns the same diagnostic set each time"
+          ],
+          "failureExamples": [
+            "a malformed ambient declaration string throws inside getScriptSnapshot, and the entire checkCode() promise chain rejects, breaking linting for all subsequent edits",
+            "calling checkCode twice in a row on identical code yields a different diagnostic count the second time because the ambient file was re-appended to getScriptFileNames on every call"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is a partial wire-up \u2014 the developer adds the ambient file to getScriptSnapshot but forgets to also list it in getScriptFileNames (or fileExists/readFile), so the language service never loads it; fix by grepping tsCheck.ts for every literal check of 'input.ts' and adding the matching branch for the new file id in all of them."
+    },
+    {
+      "id": "end-to-end-verification",
+      "order": 5,
+      "name": "Verify a representative multi-service solution executes end-to-end in the real worker sandbox",
+      "goal": "Write and run (manually, in the actual app) a sample solution using each of the 5 service handles, confirming worker execution succeeds, trace entries appear correctly formatted in the Run panel's LastRunCase output, and autocomplete/TS-linting both behave as wired.",
+      "boundedContext": "sandbox execution / editor interface",
+      "layer": "cross-cutting",
+      "blastRadius": "small",
+      "inputs": [
+        "worker-service-injection output",
+        "service-call-tracing output",
+        "editor-autocomplete-source output",
+        "tscheck-ambient-declarations output"
+      ],
+      "expectedResult": "A documented manual verification pass confirming: worker run succeeds, {l,t} trace entries for all 5 services appear in the console/log stream via LastRunCase, autocomplete shows real completions for all 5 handles, and TS-mode shows no false diagnostics; any residual gap explicitly stated.",
+      "dependsOn": [
+        "worker-service-injection",
+        "service-call-tracing",
+        "editor-autocomplete-source",
+        "tscheck-ambient-declarations"
+      ],
+      "rubric": [
+        {
+          "id": "worker-execution-succeeds",
+          "label": "Multi-service solution runs in the real worker sandbox",
+          "ruleStatement": "A sample solution that calls all 5 service handles must execute to completion inside the actual sandbox.worker.ts Web Worker (via new Function), not a mock/unit harness, and finish with a 'done' postMessage and no uncaught worker error.",
+          "passCriteria": [
+            "The verification artifact shows the run originated from the CodeMirror editor's real Run action, not a standalone script",
+            "Each of the 5 service handles is invoked at least once in the sample solution and the call returns a value/resolves without throwing",
+            "Worker emits a terminal 'done' message; no 'compile' error or uncaught 'error' console entry is present in the captured transcript",
+            "No SharedArrayBuffer/Atomics runtime exception occurs for any handle, confirming the aggregator's exclusion of Mutex/MutexLock/SharedMemoryOffsetStorage was effective"
+          ],
+          "failureExamples": [
+            "Verification only shows the service call succeeding in a Node/Vitest test, never inside sandbox.worker.ts",
+            "Worker throws 'SharedArrayBuffer is not defined' for a handle because a SAB-dependent export leaked through the aggregator",
+            "Only 3 of 5 services are exercised and the other 2 are asserted 'should work' without being run"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "trace-entries-in-run-panel",
+          "label": "Structured {l,t} trace entries reach LastRunCase for every service",
+          "ruleStatement": "Every service call in the sample solution must produce a structured trace entry that appears, correctly formatted, in the Run panel's LastRunCase console/log output.",
+          "passCriteria": [
+            "The captured LastRunCase output contains at least one distinguishable {l,t}-shaped entry per service (5 distinct entries minimum)",
+            "Each trace entry identifies which service/operation it came from rather than being a generic untagged log line",
+            "Trace entries appear in the same stream/order as other console output in LastRunCase",
+            "No service call is silently un-traced"
+          ],
+          "failureExamples": [
+            "Redis and Postgres calls produce trace entries but Kafka/RabbitMQ/BullMQ calls are invisible in LastRunCase",
+            "Trace entries appear in the browser devtools console but never reach the LastRunCase/{l,t} stream the UI actually renders",
+            "A single generic log line is emitted with no way to tell which service or operation produced it"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "autocomplete-surfaces-all-handles",
+          "label": "All 5 service handles produce real completions in the editor",
+          "ruleStatement": "Typing each service handle identifier in the CodeMirror editor must surface real, non-empty completions for its methods \u2014 this is a caller-supplied acceptance criterion and must be directly demonstrated.",
+          "passCriteria": [
+            "Verification includes, for each of the 5 handles, either a screenshot/recording of the completion popup or an enumerated list of the completion items returned when the handle + '.' is typed",
+            "Completion items reflect real methods on the service rather than generic fallback suggestions",
+            "At least one handle's completions are shown live in the actual CodeMirror editor instance used by the problem-solution page"
+          ],
+          "failureExamples": [
+            "Verification claims autocomplete 'is wired' by citing the registration code, with no actual completion popup shown",
+            "4 of 5 handles show real method completions; the 5th shows no suggestions"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "ts-diagnostics-clean",
+          "label": "TS-mode reports no false diagnostics on valid service usage",
+          "ruleStatement": "With TS-linting active in the editor, valid calls to all 5 service handles in the sample solution must produce zero false-positive diagnostics attributable to missing/incorrect ambient declarations.",
+          "passCriteria": [
+            "A screenshot or captured diagnostics list shows the sample solution with 0 errors/warnings sourced from the 5 service handle usages",
+            "At least one deliberately invalid call is also tried and correctly flagged, confirming linting is active rather than silently disabled",
+            "Ambient declarations used for linting match the actual runtime API surface injected into the worker scope"
+          ],
+          "failureExamples": [
+            "Editor shows 'Cannot find name redis' even though redis.get() executes fine at runtime",
+            "No negative-case check was attempted, so an always-empty diagnostics panel could mean linting is simply off"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "gaps-explicitly-documented",
+          "label": "Residual gaps or partial coverage are explicitly stated, not silently omitted",
+          "ruleStatement": "Any service, handle, or check that could not be verified end-to-end must be named explicitly in the verification writeup, with the specific reason it was skipped.",
+          "passCriteria": [
+            "The verification deliverable contains an explicit pass/fail line for each of the 5 services across each of the checks (execution, tracing, autocomplete, TS-diagnostics), none silently blank",
+            "Any 'unverified' or 'skipped' item states the concrete blocker",
+            "The summary does not use blanket language ('all services work') without the itemized backing evidence above it"
+          ],
+          "failureExamples": [
+            "Report says 'verification passed' with no per-service breakdown",
+            "A known gap discovered during manual testing is omitted from the final writeup"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is trace entries reaching devtools/console but not the actual {l,t} LastRunCase stream, or a SharedArrayBuffer-dependent export having leaked through the aggregator for one service \u2014 fix by routing the trace wrapper's log calls through the same postMessage({type:'console',...}) path sandbox.worker.ts already uses, and re-verify the aggregator's exclusions before re-testing that handle."
+    }
+  ],
+  "successCriteria": [
+    "For every service Discovery found ready (all five, Kafka and BullMQ via their default AsyncLock-based paths, SharedArrayBuffer-dependent exports excluded): a global handle is reachable inside sandbox.worker.ts's Function execution.",
+    "services-aggregator: a single new module is the source of truth for the 5 service handles' names/constructors, with no export-name collisions and both Kafka's and BullMQ's SharedArrayBuffer-dependent exports explicitly excluded.",
+    "worker-service-injection: sandbox.worker.ts's Function call exposes all 5 service handles as fresh, non-persisted globals per run, with require()'s throw behavior unchanged.",
+    "service-call-tracing: every call on a service handle emits a correctly formatted {l,t} trace entry through the existing console pipeline, including on failure paths.",
+    "editor-autocomplete-source: typing any of the 5 handle identifiers + '.' in CodeEditor.tsx surfaces real, aggregator-sourced completions, without breaking existing scope-based completions.",
+    "tscheck-ambient-declarations: TS-mode linting recognizes all 5 service globals with real (non-any) types and produces no false 'Cannot find name' diagnostics.",
+    "end-to-end-verification: a representative multi-service solution executes correctly in the real worker sandbox with all four prior phases' guarantees demonstrated together, and any residual gap is explicitly documented rather than silently dropped."
+  ],
+  "deferred": [
+    "A @services path alias in vite.config.ts/tsconfig.app.json \u2014 relative imports already work; adding an alias touches two config files in lockstep for a naming convenience only, not needed to satisfy any success criterion.",
+    "Kafka's SharedMemoryOffsetStorage/Mutex and BullMQ's MutexLock (all SharedArrayBuffer-dependent) \u2014 Discovery confirmed these require COOP/COEP headers unavailable in this static SPA and are explicitly out of scope; excluded by name in services-aggregator rather than built and gated.",
+    "Cross-run/cross-session persistence or an RPC strategy for service state (e.g. Redis keys surviving a page reload) \u2014 explicitly out of scope per task; each run gets fresh instances by design.",
+    "A dedicated observability/tracing UI panel \u2014 tracing reuses the existing console stream only, per the repo owner's clarification.",
+    "A new WorkerMsg variant or structured-log message type in useRunCode.ts/store.ts \u2014 the existing {l,t} string-formatted console conduit is sufficient and lower-risk; introducing a new type was explicitly flagged as riskier and unnecessary by Discovery.",
+    "Wiring or executing the *.example.ts/*.sample.ts reference files \u2014 Discovery marked them documentation-only, one even uses top-level await incompatible with the Function-based execution model.",
+    "Solving Kafka's/BullMQ's COOP/COEP requirement via app-wide HTTP header changes or hosting configuration \u2014 an app-level infra decision with side effects beyond this task.",
+    "Adding new backend services beyond the five already present in src/services.",
+    "Rewriting or redesigning the services' internal architecture beyond what's needed to expose and trace their public API.",
+    "Authentication, authorization, or multi-user access control for the services \u2014 leetlab is client-side-only with no backend.",
+    "Building exhaustive automated tests for every service's internal correctness (e.g. full MVCC transaction-isolation test suite)."
+  ]
+}
