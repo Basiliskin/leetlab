@@ -562,4 +562,227 @@ export const PROBLEM_BANK: Problem[] = [
   ],
   desc:`<p>Implement a first in first out (FIFO) queue using only two stacks. The implemented queue must support all the functions of a normal queue: <code>push</code>, <code>pop</code>, <code>peek</code>, and <code>empty</code>.</p><ul><li><code>MyQueue()</code> initializes the queue object</li><li><code>void push(x)</code> pushes element x to the back of the queue</li><li><code>int pop()</code> removes and returns the element from the front</li><li><code>int peek()</code> returns the element at the front</li><li><code>boolean empty()</code> returns true if the queue is empty</li></ul><p class="note">Judge protocol: your class is instantiated with <code>new MyQueue()</code>, then each <code>[method, args]</code> call below is applied in order. <code>undefined</code> return values are normalised to <code>null</code> before comparison.</p><h4>Example</h4><div class="ex"><div><b>Calls:</b>["MyQueue","push","push","peek","pop","empty"]</div><div><b>Args:</b>[[],[1],[2],[],[],[]]</div><div><b>Output:</b>[null,null,null,1,1,false]</div></div><h4>Constraints</h4><ul><li>1 ≤ calls ≤ 100</li><li>-2<sup>31</sup> ≤ x ≤ 2<sup>31</sup> − 1</li><li>pop and peek are always called on a non-empty queue</li></ul>`
 }
+,
+{
+  slug:'k-way-merge-async', num:8013, title:'K-Way Merge (Async Generators)', difficulty:'Hard', tags:['Async Generator','Merge Sort','Streaming'],
+  fnName:'mergeKSortedAsync', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[][]} streams\n * @return {Promise<number[]>}\n */\nasync function mergeKSortedAsync(streams) {\n  \n}\n",
+    ts:"async function mergeKSortedAsync(streams: number[][]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[[1,4,7],[2,3,8],[0,5,6]]], out:[0,1,2,3,4,5,6,7,8]},
+    {in:[[[1,2,3]]], out:[1,2,3]},
+    {in:[[[],[1,2],[]]], out:[1,2]},
+    {in:[[[5,10],[1,2],[3,7,9]]], out:[1,2,3,5,7,9,10]},
+    {in:[[[],[],[]]], out:[]},
+    {in:[[[-3,0,4],[-5,-1,2],[1,3]]], out:[-5,-3,-1,0,1,2,3,4]}
+  ],
+  hints:[
+    "Each inner array is already sorted — that mirrors a MongoDB cursor with .sort() applied, or one shard of a partitioned log. Never concatenate everything and re-sort; that reads every source fully upfront and pays an extra O(log n) factor you don't need.",
+    "Wrap each array as an async generator that yields one item at a time. Keep only the current head of each stream in memory, repeatedly advance whichever head is smallest and yield it — that's the classic K-way merge, O(n·k) time and O(k) memory instead of O(n)."
+  ],
+  desc:`<p>You are given <code>streams</code>, an array of <code>k</code> number arrays. Each individual array is already sorted in <strong>ascending order</strong> — think of them as <code>k</code> separate, presorted database cursors or shard partitions.</p><p>Merge all <code>k</code> streams into a single ascending array containing every element, using a <strong>K-way merge built from async generators</strong>: at each step you should only need to look at the current head of each stream, never the whole stream at once.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array once merging is complete.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>streams = [[1,4,7],[2,3,8],[0,5,6]]</div><div><b>Output:</b>[0,1,2,3,4,5,6,7,8]</div></div><div class="ex"><div><b>Input:</b>streams = [[],[1,2],[]]</div><div><b>Output:</b>[1,2]</div><div class="exp">Empty streams simply contribute nothing.</div></div><h4>Constraints</h4><ul><li>1 ≤ streams.length ≤ 20</li><li>0 ≤ total elements across all streams ≤ 2000</li><li>Each individual stream is sorted ascending</li></ul>`
+},
+{
+  slug:'infinite-stream-take', num:8014, title:'Unbounded Async Stream — Take N', difficulty:'Medium', tags:['Async Generator','Streaming'],
+  fnName:'firstNDivisibleBy', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number} k\n * @param {number} n\n * @return {Promise<number[]>}\n */\nasync function firstNDivisibleBy(k, n) {\n  \n}\n",
+    ts:"async function firstNDivisibleBy(k: number, n: number): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[3,4], out:[3,6,9,12]}, {in:[5,3], out:[5,10,15]}, {in:[1,5], out:[1,2,3,4,5]},
+    {in:[7,0], out:[]}, {in:[2,6], out:[2,4,6,8,10,12]}, {in:[10,2], out:[10,20]}
+  ],
+  hints:[
+    "Picture the source as an infinite feed — a live sensor, or a MongoDB change stream — that never ends. You cannot drain it into an array first; a loop with no exit condition would grow memory forever and never return.",
+    "Write an infinite async generator (a while(true) loop that yields and awaits a tick) and consume it with a for-await loop that breaks the moment you have collected n matches. Breaking out of a for-await loop calls the generator's return(), so the source stops cleanly instead of running forever in the background."
+  ],
+  desc:`<p>Implement <code>firstNDivisibleBy(k, n)</code>: starting from <code>1</code> and counting upward <strong>forever</strong>, collect the first <code>n</code> positive integers divisible by <code>k</code>, in increasing order.</p><p>Model the counter itself as an <strong>infinite async generator</strong> — it must not know in advance how many values will be requested — and stop consuming it as soon as you have enough matches.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of exactly <code>n</code> numbers (or fewer only when <code>n</code> is <code>0</code>).</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>k = 3, n = 4</div><div><b>Output:</b>[3,6,9,12]</div></div><div class="ex"><div><b>Input:</b>k = 7, n = 0</div><div><b>Output:</b>[]</div><div class="exp">Zero matches requested — the infinite source must never even start being pulled from... or if it does, it must stop immediately.</div></div><h4>Constraints</h4><ul><li>1 ≤ k ≤ 1000</li><li>0 ≤ n ≤ 50</li></ul>`
+},
+{
+  slug:'backpressure-budgeted-take', num:8015, title:'Backpressure — Budgeted Take', difficulty:'Medium', tags:['Async Generator','Backpressure','Streaming'],
+  fnName:'budgetedTakeAsync', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} nums\n * @param {number} budget\n * @return {Promise<number[]>}\n */\nasync function budgetedTakeAsync(nums, budget) {\n  \n}\n",
+    ts:"async function budgetedTakeAsync(nums: number[], budget: number): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,2,3,4],5], out:[1,2]}, {in:[[5,5,5],20], out:[5,5,5]}, {in:[[10],5], out:[]},
+    {in:[[1,1,1,1,1],3], out:[1,1,1]}, {in:[[],10], out:[]}, {in:[[2,2,2],4], out:[2,2]}
+  ],
+  hints:[
+    "Model nums as a fast producer (a Kafka topic, say) feeding a slow consumer (an external API with a rate limit). If you map over the whole array up front, you've already committed to work you can't afford — capacity has to be checked between items, not after eagerly collecting everything.",
+    "Consume nums one at a time with an async generator, awaiting a simulated 'send' before deciding whether to continue. Track the running sum and stop pulling from the source — not just stop appending to the result — the instant the next item would push the sum over budget."
+  ],
+  desc:`<p>You are streaming <code>nums</code> one item at a time into a slow downstream sink. Given a <code>budget</code>, keep accepting items — in order — for as long as the <strong>running sum</strong> of accepted items stays <code>≤ budget</code>. The moment the next item would push the running sum over budget, stop pulling from the source entirely and return only what was accepted so far.</p><p>This is a <strong>backpressure</strong> exercise: the point is that the source is never asked for more than it needs to produce, not merely that the result is filtered afterward.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of the accepted prefix.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,2,3,4], budget = 5</div><div><b>Output:</b>[1,2]</div><div class="exp">Running sums: 1, 3, then 6 — 6 exceeds 5, so 3 (and everything after it) is never accepted.</div></div><div class="ex"><div><b>Input:</b>nums = [10], budget = 5</div><div><b>Output:</b>[]</div><div class="exp">Even the first item alone exceeds the budget.</div></div><h4>Constraints</h4><ul><li>0 ≤ nums.length ≤ 1000</li><li>0 ≤ nums[i] ≤ 10<sup>4</sup></li><li>0 ≤ budget ≤ 10<sup>6</sup></li></ul>`
+},
+{
+  slug:'materialize-for-random-access', num:8016, title:'When Not To Stream — Random Access', difficulty:'Medium', tags:['Async Iterable','Array'],
+  fnName:'valuesAtIndices', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} stream\n * @param {number[]} indices\n * @return {Promise<number[]>}\n */\nasync function valuesAtIndices(stream, indices) {\n  \n}\n",
+    ts:"async function valuesAtIndices(stream: number[], indices: number[]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[10,20,30,40],[0,3,1]], out:[10,40,20]}, {in:[[5],[0,0,0]], out:[5,5,5]},
+    {in:[[1,2,3,4,5],[4,3,2,1,0]], out:[5,4,3,2,1]}, {in:[[],[]], out:[]},
+    {in:[[7,8,9],[1]], out:[8]}, {in:[[100,200],[0,1,0,1]], out:[100,200,100,200]}
+  ],
+  hints:[
+    "Treat stream as if it only arrives through an async generator — you can call .next() on it, but there is no stream[i]. If your solution re-consumes the source from scratch for every requested index, that's O(n·m) work and, in a real system, would mean re-running an expensive query once per lookup.",
+    "This is exactly when NOT to stay lazy: since you need repeated, out-of-order access to arbitrary positions, drain the async source into a plain array exactly once with a single for-await loop, then index into that array as many times as indices requires."
+  ],
+  desc:`<p><code>stream</code> represents values that only arrive one at a time, asynchronously (imagine paging through a paginated API). You are given a list of <code>indices</code> to read from it, in a specific (possibly repeated, possibly out-of-order) order.</p><p>Return the values at those positions, in the order <code>indices</code> lists them — but consume the underlying source only <strong>once</strong>, no matter how many indices are requested or how they're ordered.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array the same length as <code>indices</code>.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>stream = [10,20,30,40], indices = [0,3,1]</div><div><b>Output:</b>[10,40,20]</div></div><div class="ex"><div><b>Input:</b>stream = [5], indices = [0,0,0]</div><div><b>Output:</b>[5,5,5]</div><div class="exp">Index 0 is read three times — the source itself is only consumed once.</div></div><h4>Constraints</h4><ul><li>0 ≤ stream.length ≤ 1000</li><li>0 ≤ indices.length ≤ 1000</li><li>0 ≤ indices[i] < stream.length</li></ul>`
+},
+{
+  slug:'stream-median', num:8017, title:'When Not To Stream — Median', difficulty:'Medium', tags:['Async Iterable','Sorting'],
+  fnName:'streamMedian', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} values\n * @return {Promise<number>}\n */\nasync function streamMedian(values) {\n  \n}\n",
+    ts:"async function streamMedian(values: number[]): Promise<number> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[3,1,2]], out:2}, {in:[[1,2,3,4]], out:2.5}, {in:[[5]], out:5},
+    {in:[[7,7,7,7]], out:7}, {in:[[10,1,3,2,9,8]], out:5.5}, {in:[[2,8]], out:5}
+  ],
+  hints:[
+    "To find the median you need to know exactly which value sits in the middle, and you can't know that from seeing one value at a time — you need the full picture. Streaming pays off when each item can be handled independently or with small O(1) state (a sum, a min, a count); median doesn't fit that shape.",
+    "Consume values as if from an async source with a single for-await loop, but this time collect every value into an array — there's no way around holding all n numbers for an exact median. Sort the buffered array, then average the two middle elements (or return the single middle element for odd length)."
+  ],
+  desc:`<p>Given <code>values</code> arriving one at a time from an async source, compute their <strong>median</strong>: for an odd count, the middle value once sorted; for an even count, the average of the two middle values once sorted.</p><p>Unlike the K-way merge or budgeted-take exercises, this is a case where the whole source genuinely must be buffered before an answer is possible — there is no O(1)-memory streaming shortcut for an exact median.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain number.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>values = [3,1,2]</div><div><b>Output:</b>2</div></div><div class="ex"><div><b>Input:</b>values = [1,2,3,4]</div><div><b>Output:</b>2.5</div><div class="exp">Sorted: [1,2,3,4] — middle two are 2 and 3, average 2.5.</div></div><h4>Constraints</h4><ul><li>1 ≤ values.length ≤ 1000</li><li>-10<sup>4</sup> ≤ values[i] ≤ 10<sup>4</sup></li></ul>`
+}
+,
+{
+  slug:'classnames-utility', num:8018, title:'Design System Utility — classNames', difficulty:'Easy', tags:['Design System','String'],
+  fnName:'classNames', mode:'fn',
+  starter:{
+    js:"/**\n * @param {...*} args\n * @return {string}\n */\nfunction classNames(...args) {\n  \n}\n",
+    ts:"function classNames(...args: unknown[]): string {\n  \n}\n"
+  },
+  tests:[
+    {in:['btn', {primary:true, disabled:false}, ['large', null]], out:'btn primary large'},
+    {in:[], out:''},
+    {in:['a','a','b'], out:'a a b'},
+    {in:[0, false, null, undefined, ''], out:''},
+    {in:[['foo', 0, 'bar'], {baz:true}], out:'foo bar baz'},
+    {in:['foo', ['bar', {baz:false, qux:true}]], out:'foo bar qux'}
+  ],
+  hints:[
+    "This is the utility every design system reaches for first (clsx / classnames on npm) — components accept a mix of static strings, conditional objects, and arrays of the same, and it all needs to collapse into one class string.",
+    "Walk the arguments recursively: a falsy value contributes nothing, a string is taken as-is, an array is walked item by item, and a plain object contributes each key whose value is truthy. Join everything that survives with single spaces, preserving argument order — don't deduplicate."
+  ],
+  desc:`<p>Implement <code>classNames(...args)</code>, the class-name-merging utility that underlies most component libraries (in the spirit of <code>clsx</code>/<code>classnames</code>).</p><p>Each argument can be:</p><ul><li>a <strong>string</strong> — included as-is</li><li>a <strong>falsy value</strong> (<code>0</code>, <code>false</code>, <code>null</code>, <code>undefined</code>, <code>''</code>) — ignored</li><li>an <strong>array</strong> — walked recursively using the same rules</li><li>a <strong>plain object</strong> — each key is included only if its value is truthy</li></ul><p>Return every surviving class name, in the order encountered, joined by a single space. Do not deduplicate.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>classNames('btn', {primary:true, disabled:false}, ['large', null])</div><div><b>Output:</b>"btn primary large"</div></div><div class="ex"><div><b>Input:</b>classNames(0, false, null, undefined, '')</div><div><b>Output:</b>""</div></div><h4>Constraints</h4><ul><li>0 ≤ args.length ≤ 100</li><li>Nesting depth of arrays/objects ≤ 10</li></ul>`
+},
+{
+  slug:'design-token-resolver', num:8019, title:'Design Token Resolver', difficulty:'Medium', tags:['Design System','Recursion','Object'],
+  fnName:'resolveTokens', mode:'fn',
+  starter:{
+    js:"/**\n * @param {object} tokens\n * @return {object}\n */\nfunction resolveTokens(tokens) {\n  \n}\n",
+    ts:"function resolveTokens(tokens: Record<string, unknown>): Record<string, unknown> {\n  \n}\n"
+  },
+  tests:[
+    {in:[{color:{primary:'#0d6efd', link:'$color.primary', bg:{page:'#fff'}}, spacing:{sm:'4px'}}],
+     out:{'color.primary':'#0d6efd','color.link':'#0d6efd','color.bg.page':'#fff','spacing.sm':'4px'}},
+    {in:[{a:{b:'$c.d'}, c:{d:'#000'}}], out:{'a.b':'#000','c.d':'#000'}},
+    {in:[{x:'1px'}], out:{'x':'1px'}},
+    {in:[{a:'$b', b:'$c', c:'red'}], out:{'a':'red','b':'red','c':'red'}}
+  ],
+  hints:[
+    "This is how Style Dictionary and similar token pipelines work: a designer writes color.link as an alias of color.primary ('$color.primary') instead of repeating the hex value, so the two always stay in sync.",
+    "First flatten the nested token tree into dot-path keys (e.g. color.bg.page). Then resolve each leaf: if a value is a string starting with '$', look up the path after the '$' in the flattened map and resolve that value too — aliases can chain through other aliases, so resolve recursively until you hit a real value."
+  ],
+  desc:`<p>Design tokens are usually authored as a nested object, where a leaf value can either be a literal (like <code>'#0d6efd'</code>) or an <strong>alias</strong> referencing another token by dot-path, written as <code>'$some.other.path'</code>.</p><p>Implement <code>resolveTokens(tokens)</code>: flatten the nested tree into a single-level object keyed by dot-path, and replace every alias with the literal value it ultimately points to — following chains of aliases as needed.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>{ color: { primary: '#0d6efd', link: '$color.primary' } }</div><div><b>Output:</b>{ 'color.primary': '#0d6efd', 'color.link': '#0d6efd' }</div></div><div class="ex"><div><b>Input:</b>{ a: '$b', b: '$c', c: 'red' }</div><div><b>Output:</b>{ a: 'red', b: 'red', c: 'red' }</div><div class="exp">a → b → c: aliases can chain more than one level deep.</div></div><h4>Constraints</h4><ul><li>1 ≤ total leaf tokens ≤ 200</li><li>Nesting depth ≤ 10</li><li>No alias cycles</li></ul>`
+},
+{
+  slug:'responsive-value-resolver', num:8020, title:'Responsive Value Resolver', difficulty:'Medium', tags:['Design System','Object'],
+  fnName:'resolveResponsiveValue', mode:'fn',
+  starter:{
+    js:"/**\n * @param {object} breakpoints\n * @param {object} values\n * @param {number} width\n * @return {*}\n */\nfunction resolveResponsiveValue(breakpoints, values, width) {\n  \n}\n",
+    ts:"function resolveResponsiveValue(breakpoints: Record<string, number>, values: Record<string, string>, width: number): string {\n  \n}\n"
+  },
+  tests:[
+    {in:[{sm:0, md:768, lg:1024}, {base:'1col', md:'2col', lg:'3col'}, 800], out:'2col'},
+    {in:[{sm:0, md:768, lg:1024}, {base:'1col', md:'2col', lg:'3col'}, 1200], out:'3col'},
+    {in:[{sm:0, md:768, lg:1024}, {base:'1col', md:'2col', lg:'3col'}, 100], out:'1col'},
+    {in:[{sm:0, md:768, lg:1024}, {base:'1col', md:'2col', lg:'3col'}, 768], out:'2col'},
+    {in:[{sm:0, md:768, lg:1024}, {base:'x', sm:'y'}, 2000], out:'y'},
+    {in:[{sm:0, md:768, lg:1024}, {base:'1col', md:'2col', lg:'3col'}, 1023], out:'2col'}
+  ],
+  hints:[
+    "This is the mobile-first cascade used by systems like Chakra UI or styled-system: a value set at a breakpoint applies at that width and every wider width, until a larger breakpoint overrides it.",
+    "Sort breakpoint names by their min-width. Find every breakpoint whose min-width is ≤ the given width, then walk from the widest applicable breakpoint down to the narrowest, returning the first one that actually has a value defined in values. If none of them do, fall back to values.base."
+  ],
+  desc:`<p>Design systems commonly let a prop be set per-breakpoint, mobile-first: a value defined at a breakpoint applies from that width upward until overridden by a wider breakpoint that defines its own value.</p><p>Implement <code>resolveResponsiveValue(breakpoints, values, width)</code>:</p><ul><li><code>breakpoints</code> maps a breakpoint name to its minimum width, e.g. <code>{ sm: 0, md: 768, lg: 1024 }</code></li><li><code>values</code> maps some of those same breakpoint names (plus optionally <code>'base'</code>) to a value</li><li>return the value that applies at <code>width</code>, following the mobile-first cascade — if no breakpoint at or below <code>width</code> defines a value, return <code>values.base</code></li></ul><h4>Examples</h4><div class="ex"><div><b>Input:</b>breakpoints = {sm:0, md:768, lg:1024}, values = {base:'1col', md:'2col', lg:'3col'}, width = 800</div><div><b>Output:</b>"2col"</div><div class="exp">800 ≥ 768 (md) but &lt; 1024 (lg), and md defines a value.</div></div><div class="ex"><div><b>Input:</b>breakpoints = {sm:0, md:768, lg:1024}, values = {base:'x', sm:'y'}, width = 2000</div><div><b>Output:</b>"y"</div><div class="exp">md and lg are both applicable at width 2000 but neither defines a value, so it falls back to sm.</div></div><h4>Constraints</h4><ul><li>1 ≤ breakpoints keys ≤ 10</li><li>breakpoints always includes an entry with min-width 0</li><li>0 ≤ width ≤ 10<sup>5</sup></li></ul>`
+},
+{
+  slug:'variant-class-resolver', num:8021, title:'Variant Class Resolver (cva-style)', difficulty:'Hard', tags:['Design System','Object'],
+  fnName:'resolveVariantClasses', mode:'fn',
+  starter:{
+    js:"/**\n * @param {object} config\n * @param {object} props\n * @return {string}\n */\nfunction resolveVariantClasses(config, props) {\n  \n}\n",
+    ts:"interface VariantConfig {\n  base: string\n  variants: Record<string, Record<string, string>>\n  defaultVariants?: Record<string, string>\n}\nfunction resolveVariantClasses(config: VariantConfig, props: Record<string, string>): string {\n  \n}\n"
+  },
+  tests:[
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {}],
+     out:'btn btn-md btn-primary'},
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {size:'lg'}],
+     out:'btn btn-lg btn-primary'},
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {tone:'secondary'}],
+     out:'btn btn-md btn-secondary'},
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {size:'sm', tone:'secondary'}],
+     out:'btn btn-sm btn-secondary'},
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {size:'xl'}],
+     out:'btn btn-md btn-primary'},
+    {in:[{base:'btn', variants:{size:{sm:'btn-sm',md:'btn-md',lg:'btn-lg'}, tone:{primary:'btn-primary',secondary:'btn-secondary'}}, defaultVariants:{size:'md',tone:'primary'}}, {size:'sm', tone:'purple'}],
+     out:'btn btn-sm btn-primary'}
+  ],
+  hints:[
+    "This is the shape of class-variance-authority (cva): a base class, a map of variant groups (each with named options), and default values used whenever a caller doesn't specify — or specifies something invalid.",
+    "Walk config.variants in the order its keys were defined. For each variant group, take props[key] if it names a real option in that group; otherwise fall back to defaultVariants[key]. Push the resolved class (if any), then join base plus every resolved variant class with spaces — an unrecognized value should behave exactly like an unspecified one."
+  ],
+  desc:`<p>Design systems built on utility CSS commonly generate class names from a small variant config (the pattern behind libraries like <code>class-variance-authority</code>). Implement <code>resolveVariantClasses(config, props)</code> where:</p><ul><li><code>config.base</code> is always included</li><li><code>config.variants</code> maps a variant name (e.g. <code>size</code>) to an object of option → class name (e.g. <code>{ sm: 'btn-sm', md: 'btn-md' }</code>)</li><li><code>config.defaultVariants</code> gives the option to use for a variant when <code>props</code> doesn't specify one <strong>or specifies an option that doesn't exist</strong> in that variant group</li></ul><p>Return <code>base</code> followed by the resolved class for each variant group — in the order the groups appear in <code>config.variants</code> — joined by single spaces.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>config as above, props = {}</div><div><b>Output:</b>"btn btn-md btn-primary"</div><div class="exp">No props given, so every variant falls back to its default.</div></div><div class="ex"><div><b>Input:</b>config as above, props = {size:'xl'}</div><div><b>Output:</b>"btn btn-md btn-primary"</div><div class="exp">'xl' isn't a real size option, so size falls back to its default just like an unspecified prop would.</div></div><h4>Constraints</h4><ul><li>1 ≤ variant groups ≤ 5</li><li>1 ≤ options per group ≤ 6</li><li>Every variant group has a default in defaultVariants</li></ul>`
+},
+{
+  slug:'wcag-contrast-check', num:8022, title:'WCAG Contrast Check', difficulty:'Medium', tags:['Design System','Accessibility','Math'],
+  fnName:'meetsContrastAA', mode:'fn',
+  starter:{
+    js:"/**\n * @param {string} fgHex\n * @param {string} bgHex\n * @param {'normal'|'large'} size\n * @return {boolean}\n */\nfunction meetsContrastAA(fgHex, bgHex, size) {\n  \n}\n",
+    ts:"function meetsContrastAA(fgHex: string, bgHex: string, size: 'normal' | 'large'): boolean {\n  \n}\n"
+  },
+  tests:[
+    {in:['#000000','#FFFFFF','normal'], out:true},
+    {in:['#FFFFFF','#FFFFFF','normal'], out:false},
+    {in:['#6c757d','#FFFFFF','normal'], out:true},
+    {in:['#828282','#FFFFFF','normal'], out:false},
+    {in:['#828282','#FFFFFF','large'], out:true},
+    {in:['#999999','#FFFFFF','large'], out:false}
+  ],
+  hints:[
+    "Any accessible design system needs to gate its color tokens against WCAG 2.x contrast minimums (4.5:1 for normal text, 3:1 for large text) before a pairing ships — this is the check behind that gate.",
+    "Convert each hex color to relative luminance (per the WCAG formula: gamma-correct each of R/G/B to [0,1], then weight them 0.2126/0.7152/0.0722 and sum). The contrast ratio is (lighter + 0.05) / (darker + 0.05) using the two luminances. Compare that ratio against 4.5 for 'normal' or 3 for 'large'."
+  ],
+  desc:`<p>Implement <code>meetsContrastAA(fgHex, bgHex, size)</code>, computing the <strong>WCAG contrast ratio</strong> between a foreground and background color and checking it against the WCAG 2.x <strong>AA</strong> minimums: <strong>4.5:1</strong> for <code>'normal'</code> text, <strong>3:1</strong> for <code>'large'</code> text (18pt+, or 14pt+ bold).</p><p>Relative luminance for a channel value <code>c</code> in <code>[0,255]</code>: let <code>v = c / 255</code>; if <code>v ≤ 0.03928</code> use <code>v / 12.92</code>, otherwise use <code>((v + 0.055) / 1.055) ^ 2.4</code>. Luminance <code>L = 0.2126·R + 0.7152·G + 0.0722·B</code> using the transformed channels. Contrast ratio = <code>(L_lighter + 0.05) / (L_darker + 0.05)</code>.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>fgHex = '#000000', bgHex = '#FFFFFF', size = 'normal'</div><div><b>Output:</b>true</div><div class="exp">Ratio is 21:1, the maximum possible.</div></div><div class="ex"><div><b>Input:</b>fgHex = '#828282', bgHex = '#FFFFFF', size = 'normal'</div><div><b>Output:</b>false</div><div class="exp">Ratio is ≈ 3.84:1 — enough for large text but not normal text.</div></div><h4>Constraints</h4><ul><li>Hex colors are 6-digit, given with a leading '#', case-insensitive</li></ul>`
+},
+{
+  slug:'focus-order-resolver', num:8023, title:'Focus Order Resolver', difficulty:'Medium', tags:['Design System','Accessibility','Sorting'],
+  fnName:'resolveFocusOrder', mode:'fn',
+  starter:{
+    js:"/**\n * @param {{id:string, tabIndex?:number}[]} elements\n * @return {string[]}\n */\nfunction resolveFocusOrder(elements) {\n  \n}\n",
+    ts:"interface FocusableEl {\n  id: string\n  tabIndex?: number\n}\nfunction resolveFocusOrder(elements: FocusableEl[]): string[] {\n  \n}\n"
+  },
+  tests:[
+    {in:[[{id:'a'},{id:'b',tabIndex:2},{id:'c',tabIndex:1},{id:'d'}]], out:['c','b','a','d']},
+    {in:[[{id:'a',tabIndex:-1},{id:'b'},{id:'c',tabIndex:3}]], out:['c','b']},
+    {in:[[{id:'x'},{id:'y'},{id:'z'}]], out:['x','y','z']},
+    {in:[[{id:'a',tabIndex:5},{id:'b',tabIndex:5},{id:'c',tabIndex:1}]], out:['c','a','b']},
+    {in:[[]], out:[]},
+    {in:[[{id:'m',tabIndex:0},{id:'n',tabIndex:2},{id:'o',tabIndex:-3},{id:'p',tabIndex:2}]], out:['n','p','m']}
+  ],
+  hints:[
+    "This is the actual browser Tab-key algorithm, and a custom focus-trap (in a Modal or Menu) has to reimplement it correctly: elements with a positive tabIndex are visited first, in ascending order of that index; a negative tabIndex removes an element from the sequence entirely.",
+    "Split elements into three groups: negative tabIndex (excluded), positive tabIndex (sort by tabIndex ascending, breaking ties by original array position), and tabIndex 0 or missing (kept in original array order, treated as equal to each other). The result is the positive group followed by the zero/default group."
+  ],
+  desc:`<p>Implement <code>resolveFocusOrder(elements)</code>, reproducing the order in which the <strong>Tab</strong> key would visit a set of focusable elements — the algorithm any custom focus-trap or roving-tabindex widget has to get right.</p><ul><li>An element with <strong>tabIndex &lt; 0</strong> is not keyboard-focusable — exclude it.</li><li>Elements with <strong>tabIndex &gt; 0</strong> come first, visited in ascending order of their tabIndex; ties keep their original relative order.</li><li>Elements with <strong>tabIndex === 0</strong> or no <code>tabIndex</code> at all come after all of those, in their original relative order.</li></ul><p>Return the <code>id</code>s in the resulting focus order.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>[{id:'a'},{id:'b',tabIndex:2},{id:'c',tabIndex:1},{id:'d'}]</div><div><b>Output:</b>["c","b","a","d"]</div><div class="exp">c (1) then b (2) come first; a and d (no tabIndex) follow in original order.</div></div><div class="ex"><div><b>Input:</b>[{id:'a',tabIndex:-1},{id:'b'},{id:'c',tabIndex:3}]</div><div><b>Output:</b>["c","b"]</div><div class="exp">a is excluded entirely.</div></div><h4>Constraints</h4><ul><li>0 ≤ elements.length ≤ 1000</li><li>-10 ≤ tabIndex ≤ 10<sup>4</sup> when present</li><li>All ids are unique</li></ul>`
+}
 ];
