@@ -43,7 +43,7 @@ export async function demonstrateMVCC() {
 
   // 6. TX3 Starts AFTER TX1 Commits
   const tx3 = txManager.begin();
-  let visibleToTx3 = storage.getTuples("users").filter((t) => tx3.isVisible(t));
+  const visibleToTx3 = storage.getTuples("users").filter((t) => tx3.isVisible(t));
   console.log(
     `[TX3] Sees ${visibleToTx3.length} users. (Expected: 1, Alice is now visible)`,
   );

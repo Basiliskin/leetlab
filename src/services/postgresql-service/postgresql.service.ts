@@ -109,11 +109,7 @@ export interface IStorage {
 
 // Main Thread Async Lock (Promise-based)
 export class AsyncLock implements ILock {
-  private _queue: Promise<() => void>;
-
-  constructor() {
-    this._queue = Promise.resolve(() => {});
-  }
+  private _queue: Promise<unknown> = Promise.resolve();
 
   async acquire(): Promise<() => void> {
     let release: () => void = () => {};

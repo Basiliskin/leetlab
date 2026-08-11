@@ -107,7 +107,10 @@ export class DirectExchange extends Exchange {
 
 export class FanoutExchange extends Exchange {
   route(message: Message): Queue[] {
-    return this.bindings.map((b) => b.queue); // Ignores routing key
+    // Fanout broadcasts to every bound queue; the message is part of the
+    // abstract contract but ignored here.
+    void message;
+    return this.bindings.map((b) => b.queue);
   }
 }
 
@@ -329,6 +332,9 @@ export class Broker implements IBroker {
   async publish(exchangeName: string, routingKey: string, message: Message) {
     const exchange = await this.getExchange(exchangeName);
     if (!exchange) throw new Error(`Exchange ${exchangeName} not found`);
+    // Routing happens inside the exchange via message.routingKey; the
+    // publish-level routingKey is part of the IBroker contract only.
+    void routingKey;
 
     const targetQueues = exchange.route(message);
     for (const queue of targetQueues) {

@@ -1205,8 +1205,16 @@ type NonQueueable =
   | "subscribe" | "psubscribe" | "unsubscribe" | "punsubscribe"
   | "publish" | "watch" | "unwatch";
 
+// `multi` itself is excluded from the key derivation: its return type is
+// RedisMulti, so leaving it in would make this alias circularly reference
+// itself through the mapped type's key constraint.
+type QueueableCommandName = Exclude<
+  AsyncMethodKeys<Omit<RedisEmulation, "multi">>,
+  NonQueueable
+>;
+
 export type RedisMulti = {
-  [K in Exclude<AsyncMethodKeys<RedisEmulation>, NonQueueable>]: (
+  [K in QueueableCommandName]: (
     ...args: Parameters<RedisEmulation[K]>
   ) => RedisMulti;
 } & {

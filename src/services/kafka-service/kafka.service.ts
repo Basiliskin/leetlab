@@ -334,6 +334,10 @@ export class SharedMemoryOffsetStorage implements OffsetStorage {
     partition: number,
     offset: number,
   ): Promise<void> {
+    // The SAB is addressed per partition number only, so the group/topic are
+    // part of the OffsetStorage contract but not used here.
+    void groupId;
+    void topic;
     // Offset into the SAB for this specific partition's data
     const offsetInBytes = partition * 16;
 
@@ -356,6 +360,9 @@ export class SharedMemoryOffsetStorage implements OffsetStorage {
     topic: string,
     partition: number,
   ): Promise<number> {
+    // The SAB is addressed per partition number only; see commit().
+    void groupId;
+    void topic;
     const offsetInBytes = partition * 16;
     const mutex = new Mutex(this.sab, offsetInBytes);
     mutex.lock();

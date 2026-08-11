@@ -1,16 +1,14 @@
 import {
   Queue,
   Worker,
-  QueueEvents,
-  AsyncLock,
   TypedEventEmitter,
 } from "./index";
+import { QueueEventsMap } from "./types";
 
 // Optional: share an event bus so QueueEvents, Queue and Worker all see the same events
-const eventBus = new TypedEventEmitter();
+const eventBus = new TypedEventEmitter<QueueEventsMap>();
 
 const emailQueue = new Queue("send-email", { eventBus });
-const emailEvents = new QueueEvents("send-email"); // if you need API parity
 // Wire external listeners to the same bus if desired:
 eventBus.on("completed", (job, result) => {
   console.log(`Job ${job.id} sent to ${job.data.to}`, result);
@@ -49,7 +47,7 @@ await emailQueue.add(
   },
 );
 
-// Cleanup old completed jobs after 1 hour
-setInterval(() => {
-  emailQueue.clean(60_000, "completed");
-}, 60_000);
+// Let the worker process the queued jobs, then shut everything down.
+await new Promise((r) => setTimeout(r, 1000));
+worker.close();
+emailQueue.close();

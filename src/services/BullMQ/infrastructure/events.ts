@@ -1,6 +1,6 @@
 // infrastructure/events.ts
 
-export class TypedEventEmitter<Events extends Record<string, any[]>> {
+export class TypedEventEmitter<Events extends Record<keyof Events, unknown[]>> {
   private listeners: {
     [K in keyof Events]?: Array<(...args: Events[K]) => void>;
   } = {};

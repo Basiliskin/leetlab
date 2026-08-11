@@ -37,7 +37,7 @@ export class Worker {
   ) {
     this.name = name;
 
-    let opts: WorkerOptions = {};
+    let opts: WorkerOptions;
     if (typeof processorOrOpts === "function") {
       this.processor = processorOrOpts;
       opts = maybeOpts ?? {};
@@ -95,7 +95,7 @@ export class Worker {
       }
 
       const release = await this.lock.acquire();
-      let jobs: Job[] = [];
+      let jobs: Job[];
       try {
         const slots = this.concurrency - this.processingCount;
         jobs = await this.repository.findWaiting(slots);
