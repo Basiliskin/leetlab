@@ -2,8 +2,18 @@
 // that tsCompiler already loads from the CDN at runtime; lib.d.ts files are
 // fetched lazily from jsDelivr and cached, mirroring that same approach.
 // Falls back to nothing useful offline - callers degrade to parser-based lint.
+//
+// The host also serves a synthetic ambient .d.ts (sandboxAmbient.ts)
+// declaring the 5 sandbox service globals with their real types, so
+// TS-mode solution code referencing them gets no false diagnostics.
 
 const LIB_BASE = "https://cdn.jsdelivr.net/npm/typescript@5.4.5/lib/"
+
+import {
+  AMBIENT_FILE_NAME,
+  AMBIENT_TEXT,
+  SERVICE_TEXT_PATHS,
+} from './sandboxAmbient'
 
 // Reference directives look like `lib="es2021.intl"` but map to the file
 // `lib.es2021.intl.d.ts`; seeds may already carry the full `lib.*.d.ts` name.
@@ -71,10 +81,17 @@ function makeHost(ts: typeof import('typescript')) {
       noEmit: true,
       skipLibCheck: true,
     }),
-    getScriptFileNames: () => ["input.ts"],
+    getScriptFileNames: () => [
+      "input.ts",
+      AMBIENT_FILE_NAME,
+      ...SERVICE_TEXT_PATHS.keys(),
+    ],
     getScriptVersion: () => String(version),
     getScriptSnapshot: (name: string) => {
       if (name === "input.ts") return ts.ScriptSnapshot.fromString(currentCode)
+      if (name === AMBIENT_FILE_NAME) return ts.ScriptSnapshot.fromString(AMBIENT_TEXT)
+      const svc = SERVICE_TEXT_PATHS.get(name)
+      if (svc !== undefined) return ts.ScriptSnapshot.fromString(svc)
       const n = normLibName(name)
       const text = n === undefined ? undefined : libTexts.get(n)
       return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text)
@@ -83,12 +100,16 @@ function makeHost(ts: typeof import('typescript')) {
     getDirectories: () => [],
     directoryExists: () => true,
     fileExists: (name: string) => {
-      if (name === "input.ts") return true
+      if (name === "input.ts" || name === AMBIENT_FILE_NAME) return true
+      if (SERVICE_TEXT_PATHS.has(name)) return true
       const n = normLibName(name)
       return n !== undefined && libTexts.has(n)
     },
     readFile: (name: string) => {
       if (name === "input.ts") return currentCode
+      if (name === AMBIENT_FILE_NAME) return AMBIENT_TEXT
+      const svc = SERVICE_TEXT_PATHS.get(name)
+      if (svc !== undefined) return svc
       const n = normLibName(name)
       return n === undefined ? undefined : libTexts.get(n)
     },
