@@ -20,6 +20,7 @@ import {
 } from "@codemirror/commands";
 import { useAppStore } from "../infrastructure/store";
 import { checkCode } from "../infrastructure/tsCheck";
+import { sandboxServiceCompletions } from "../infrastructure/serviceCompletions";
 
 // Marks transactions dispatched by the editor itself (programmatic doc
 // replacement, language reconfiguration) so the update listener can tell
@@ -152,6 +153,13 @@ function extensionsFor(lang: "js" | "ts") {
     language,
     javascriptLanguage.data.of({
       autocomplete: scopeCompletionSource(globalThis),
+    }),
+    // Second autocomplete facet entry (deliberately a separate .of(), not an
+    // array: a language-data array is treated as a static completion list,
+    // not more sources), so typing `redis.` surfaces the sandbox service
+    // members without touching the scope-based completions above.
+    javascriptLanguage.data.of({
+      autocomplete: sandboxServiceCompletions,
     }),
     autocompletion(),
     closeBrackets(),
