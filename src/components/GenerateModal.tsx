@@ -22,6 +22,7 @@
 // here (the review-before-add gate, Phase 6, owns acceptance).
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { clearKey, getKey, redact, setKey } from '../infrastructure/apiKeys'
 import { generateValidatedProblem, GenerationValidationError } from '../infrastructure/outputValidation'
 import { ProviderError } from '../infrastructure/providerAdapters'
@@ -170,7 +171,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
   // create form.
   const manageOpen = manageIntent !== null
   if (!selected) {
-    return (
+    return createPortal(
       <>
         <div
           className="modal-overlay"
@@ -220,7 +221,8 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
             setError(null)
           }}
         />
-      </>
+      </>,
+      document.body,
     )
   }
 
@@ -304,7 +306,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
     }
   }
 
-  return (
+  return createPortal(
     <>
       <div
         className="modal-overlay"
@@ -574,6 +576,7 @@ export function GenerateModal({ open, onClose }: GenerateModalProps) {
           setError(null)
         }}
       />
-    </>
+    </>,
+    document.body,
   )
 }

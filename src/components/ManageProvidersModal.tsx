@@ -16,6 +16,7 @@
 // API keys are not edited on this surface; the generate form owns key entry.
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   createProvider,
   deleteProvider,
@@ -208,7 +209,7 @@ export function ManageProvidersModal({
         ? 'Add a provider'
         : 'Edit provider'
 
-  return (
+  return createPortal(
     <div
       className="modal-overlay"
       onMouseDown={(e) => {
@@ -409,6 +410,7 @@ export function ManageProvidersModal({
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

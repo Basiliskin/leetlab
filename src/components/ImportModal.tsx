@@ -10,6 +10,7 @@
 // modal neither reads nor writes the apiKeys module.
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { importFullState } from '../infrastructure/fullStateImport'
 
 interface ImportModalProps {
@@ -71,7 +72,7 @@ export function ImportModal({ open, onClose }: ImportModalProps) {
     }
   }
 
-  return (
+  return createPortal(
     <div
       className="modal-overlay"
       onMouseDown={(e) => {
@@ -188,6 +189,7 @@ export function ImportModal({ open, onClose }: ImportModalProps) {
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
