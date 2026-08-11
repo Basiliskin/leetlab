@@ -4,19 +4,22 @@
 // User-facing create/edit/delete surface for the provider registry, reachable
 // from GenerateModal (the provider row's "Manage providers" link, or the empty
 // state's "Add an LLM provider" button). Lists every provider and offers a form
-// capturing exactly the editable fields the roadmap specifies — name, protocol
-// (anthropic | openai), an origin-validated baseUrl (endpoint paths rejected by
-// the registry), and a single modelName.
+// capturing name, protocol (anthropic | openai), a validated baseUrl (a path
+// prefix is fine — only query strings/fragments are rejected by the registry),
+// a single modelName, and an optional API key.
 //
 // The provider id is derived from the name on create and frozen afterwards:
 // editing preserves the id (the registry's updateProvider(id, patch) signature
 // enforces it), so the id that keys the provider's API key in leetlab.apiKeys is
 // never silently changed by a rename. Delete confirms inline and the registry's
-// deleteProvider clears the stored key — key material is never touched here.
-// API keys are not edited on this surface; the generate form owns key entry.
+// deleteProvider clears the stored key. "Duplicate" starts a create form
+// pre-filled from an existing row (name blanked so the id doesn't collide) so a
+// near-identical provider (e.g. a second model on the same gateway) doesn't
+// need re-typing the base URL or key.
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { clearKey, getKey, redact, setKey } from '../infrastructure/apiKeys'
 import {
   createProvider,
   deleteProvider,
@@ -42,6 +45,7 @@ interface FormState {
   protocol: ProviderProtocol
   baseUrl: string
   modelName: string
+  apiKey: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -49,6 +53,7 @@ const EMPTY_FORM: FormState = {
   protocol: 'openai',
   baseUrl: '',
   modelName: '',
+  apiKey: '',
 }
 
 // Ids are derived from names so the create form stays to the four editable
@@ -67,7 +72,7 @@ function describeFormError(error: string): string {
     case 'duplicate-id':
       return 'A provider with this name already exists (provider ids come from names). Choose a different name.'
     case 'invalid-base-url':
-      return 'Enter a valid origin such as https://api.anthropic.com. Paths like /v1 are rejected — the adapter adds them.'
+      return 'Enter a valid http(s) URL such as https://api.anthropic.com or https://gateway.example.com/zen/go — query strings and fragments are rejected.'
     case 'not-found':
       return 'This provider no longer exists. It may have been deleted elsewhere.'
     case 'empty-name':
@@ -149,6 +154,24 @@ export function ManageProvidersModal({
       protocol: provider.protocol,
       baseUrl: provider.baseUrl,
       modelName: provider.modelName,
+      apiKey: getKey(provider.id) ?? '',
+    })
+    setFormError(null)
+  }
+
+  // Pre-fills a create form from an existing row, including its saved key —
+  // useful for a second model on the same gateway. The name is blanked (the id
+  // is derived from it, and the source id is already taken) so the user picks
+  // a new one before saving.
+  const startDuplicate = (provider: ProviderDefinition) => {
+    setMode('create')
+    setEditingId(null)
+    setForm({
+      name: '',
+      protocol: provider.protocol,
+      baseUrl: provider.baseUrl,
+      modelName: provider.modelName,
+      apiKey: getKey(provider.id) ?? '',
     })
     setFormError(null)
   }
@@ -184,6 +207,8 @@ export function ManageProvidersModal({
         setFormError(describeFormError(result.error))
         return
       }
+      const key = form.apiKey.trim()
+      if (key) setKey(result.provider.id, key)
       onCreated?.(result.provider.id)
     } else if (mode === 'edit' && editingId) {
       // updateProvider(id, patch) preserves the id, keeping the API key (keyed
@@ -198,6 +223,9 @@ export function ManageProvidersModal({
         setFormError(describeFormError(result.error))
         return
       }
+      const key = form.apiKey.trim()
+      if (key) setKey(editingId, key)
+      else clearKey(editingId)
     }
     backToList()
   }
@@ -273,6 +301,14 @@ export function ManageProvidersModal({
                           aria-label={`Edit ${p.name}`}
                         >
                           Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="prow-btn"
+                          onClick={() => startDuplicate(p)}
+                          aria-label={`Duplicate ${p.name}`}
+                        >
+                          Duplicate
                         </button>
                         {confirming ? (
                           <>
@@ -374,8 +410,9 @@ export function ManageProvidersModal({
                 placeholder="https://api.example.com"
               />
               <div className="field-hint">
-                Enter the origin only — the adapter appends /v1/… itself. Endpoint
-                paths are rejected.
+                The adapter appends /v1/… to this. A path prefix (e.g.
+                https://gateway.example.com/zen/go) is fine; query strings and
+                fragments are rejected.
               </div>
             </div>
 
@@ -390,6 +427,23 @@ export function ManageProvidersModal({
               <div className="field-hint">
                 The single model used for generation. May be left empty for local
                 servers.
+              </div>
+            </div>
+
+            <div className="form-row">
+              <label htmlFor="prov-key">API key</label>
+              <input
+                id="prov-key"
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+                placeholder="Leave blank for local servers that need no key"
+                autoComplete="off"
+              />
+              <div className="field-hint">
+                {mode === 'edit' && editingId && getKey(editingId)
+                  ? `Saved key: ${redact(getKey(editingId) ?? '')}. Stored locally in this browser, keyed to this provider; clearing this field removes it.`
+                  : 'Stored locally in this browser, keyed to this provider. Skip this if the generate form will supply a key per session instead.'}
               </div>
             </div>
 

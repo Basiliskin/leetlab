@@ -10,8 +10,10 @@
 //
 // The registry reads localStorage lazily (per call) and defensively: a corrupt
 // store reads back as an empty registry instead of throwing, and garbage rows
-// are dropped. Invalid baseUrls (endpoint paths, non-http schemes) are rejected
-// at write time because the adapter appends `/v1/...` itself.
+// are dropped. Invalid baseUrls (query strings, fragments, non-http schemes)
+// are rejected at write time; a path prefix (e.g. a gateway mounted under
+// `/zen/go`) is allowed and kept as-is since the adapter simply appends
+// `/v1/...` after it.
 //
 // This module is the only writer to `leetlab.providers`; it never touches
 // `leetlab.v2` or the export path. Deleting a provider also clears its API key
@@ -79,14 +81,15 @@ const SEED_PROVIDERS: readonly ProviderDefinition[] = [
   },
 ]
 
-// Validate and normalize a baseUrl down to its origin. The adapter appends
-// `/v1/...` itself, so endpoint paths, query strings, and fragments are
-// rejected here — they would otherwise produce a doubled path at generation
-// time. Accepts http/https only, tolerates casing, and strips a trailing slash.
+// Validate and normalize a baseUrl. The adapter appends `/v1/...` to
+// whatever is stored here, so a path prefix (a gateway mounted under e.g.
+// `/zen/go`) is legitimate and preserved; only query strings and fragments
+// are rejected, since those can't meaningfully prefix an appended path.
+// Accepts http/https only and strips a trailing slash.
 export type BaseUrlNormalization = { ok: true; baseUrl: string } | { ok: false }
 
 export function normalizeBaseUrl(input: string): BaseUrlNormalization {
-  const trimmed = input.trim()
+  const trimmed = input.trim().replace(/\/+$/, '')
   let url: URL
   try {
     url = new URL(trimmed)
@@ -94,12 +97,9 @@ export function normalizeBaseUrl(input: string): BaseUrlNormalization {
     return { ok: false }
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return { ok: false }
-  // `url.origin` excludes any path/query/hash; the input must equal it exactly
-  // (modulo casing and a trailing slash) or it is an endpoint path, not an
-  // origin.
-  const noSlash = trimmed.replace(/\/+$/, '')
-  if (noSlash.toLowerCase() !== url.origin.toLowerCase()) return { ok: false }
-  return { ok: true, baseUrl: url.origin }
+  if (url.search || url.hash) return { ok: false }
+  const baseUrl = `${url.origin}${url.pathname}`.replace(/\/+$/, '')
+  return { ok: true, baseUrl }
 }
 
 function isProviderDefinition(value: unknown): value is ProviderDefinition {

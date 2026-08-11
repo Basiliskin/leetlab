@@ -436,10 +436,10 @@
   .gen-empty-btn{margin-top:12px}
   .providers{list-style:none;display:flex;flex-direction:column;gap:8px}
   .provider-row{
-    display:flex;align-items:center;gap:12px;padding:10px 12px;
+    display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 12px;
     border:1px solid var(--line-soft);border-radius:8px;background:var(--inset);
   }
-  .provider-main{flex:1;min-width:0}
+  .provider-main{flex:1 1 240px;min-width:0}
   .provider-name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px}
   .protocol-pill{
     font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 7px;
@@ -449,7 +449,7 @@
   .protocol-pill.anthropic{color:var(--amber2);background:rgba(255,161,22,.12)}
   .provider-detail{
     font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    overflow-wrap:anywhere;
   }
   .provider-detail code{color:var(--mut)}
   .provider-actions{display:flex;gap:6px;flex:0 0 auto}
