@@ -6,6 +6,7 @@ import {
   SANDBOX_SERVICE_CONSTRUCTORS,
   type SandboxServiceName,
 } from '../services/sandbox-bindings'
+import { traceService } from './serviceTracing'
 
 // The 5 global handles exposed to sandboxed solution code, in the exact order
 // they appear in the `new Function` signature and its call-site arguments.
@@ -195,8 +196,13 @@ interface RunMsg {
 self.onmessage = async function (ev: MessageEvent) {
   const m: RunMsg = ev.data
   // Fresh per-run service instances, built inside the handler (never at module
-  // top level): no state may leak across runs.
+  // top level): no state may leak across runs. Each instance's public methods
+  // are wrapped so every call emits a {l,t} trace entry into the same console
+  // stream user logs use.
   const services = createSandboxServices()
+  for (const name of SERVICE_HANDLE_NAMES) {
+    traceService(name, services[name], (line) => cns.log(line))
+  }
   const moduleObj: { exports: Record<string, unknown> } = { exports: {} }
   const req = () => {
     throw new Error('require() is not available in sandbox')
