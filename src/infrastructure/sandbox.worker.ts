@@ -1,6 +1,20 @@
 // Same worker logic as before, but now a proper TypeScript file
 // Vite handles bundling automatically
 
+import {
+  createSandboxServices,
+  SANDBOX_SERVICE_CONSTRUCTORS,
+  type SandboxServiceName,
+} from '../services/sandbox-bindings'
+
+// The 5 global handles exposed to sandboxed solution code, in the exact order
+// they appear in the `new Function` signature and its call-site arguments.
+// Derived from the aggregator so names can never drift from the
+// autocomplete source or the service-constructor map.
+const SERVICE_HANDLE_NAMES = Object.keys(
+  SANDBOX_SERVICE_CONSTRUCTORS
+) as SandboxServiceName[]
+
 function safeOut(v: unknown): string {
   if (v === undefined) return 'undefined'
   try {
@@ -180,6 +194,9 @@ interface RunMsg {
 
 self.onmessage = async function (ev: MessageEvent) {
   const m: RunMsg = ev.data
+  // Fresh per-run service instances, built inside the handler (never at module
+  // top level): no state may leak across runs.
+  const services = createSandboxServices()
   const moduleObj: { exports: Record<string, unknown> } = { exports: {} }
   const req = () => {
     throw new Error('require() is not available in sandbox')
@@ -198,9 +215,17 @@ self.onmessage = async function (ev: MessageEvent) {
       'exports',
       'require',
       'process',
+      ...SERVICE_HANDLE_NAMES,
       `${m.code}\n;return (typeof ${m.name} !== "undefined") ? ${m.name} : (module.exports && (module.exports["${m.name}"] || module.exports.default));`
     )
-    entry = factory(cns, moduleObj, moduleObj.exports, req, proc)
+    entry = factory(
+      cns,
+      moduleObj,
+      moduleObj.exports,
+      req,
+      proc,
+      ...SERVICE_HANDLE_NAMES.map((name) => services[name])
+    )
   } catch (e) {
     reportError('Compile error', e)
     postMessage({ type: 'compile', error: errInfo(e), logs: drain() })
