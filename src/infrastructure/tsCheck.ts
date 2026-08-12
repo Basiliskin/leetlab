@@ -159,10 +159,50 @@ export interface TsCompletionEntry {
   detail?: string
 }
 
+// Phase 1 - tscheck-constructor-signature-completion. The constructor-call
+// context is `new Identifier(` with the cursor right after the opening paren
+// (CodeMirror's `(` is an explicit completion trigger). Rendering is driven
+// by getSignatureHelpItems displayParts - never a hardcoded type table - so
+// every built-in shares one formatter. The last (most general) overload is
+// chosen: `new ReadableStream(` therefore spells out both optional params,
+// while non-constructor values (JSON, Math, console) yield no entry at all
+// rather than a fabricated signature.
+const CONSTRUCTOR_CTX_RE = /new\s+([A-Za-z_$][\w$]*)\s*\(\s*$/
+
+function constructorSignatureEntries(
+  code: string,
+  pos: number,
+  svc: import('typescript').LanguageService,
+): TsCompletionEntry[] {
+  const m = code.slice(0, pos).match(CONSTRUCTOR_CTX_RE)
+  if (!m) return []
+  const identifier = m[1]
+  const sig = svc.getSignatureHelpItems("input.ts", pos, undefined)
+  if (!sig?.items.length) return []
+  const item = sig.items[sig.items.length - 1]
+  const sep = item.separatorDisplayParts.map((p) => p.text).join("") || ", "
+  const params = item.parameters
+    .map((p) => p.displayParts.map((t) => t.text).join(""))
+    .join(sep)
+    .replace(/\s+/g, " ")
+    .trim()
+  return [
+    {
+      name: identifier,
+      kind: "class",
+      kindModifiers: "declare",
+      sortText: "0",
+      detail: `new ${identifier}(${params})`,
+    },
+  ]
+}
+
 // Type-aware completion for the TS editor (roadmap phase tscheck-completion-
 // entrypoint). Reuses checkCode's exact live-document machinery - bump the
 // same currentCode/version, warm the same lib seed - so the LanguageService
 // resolves types against the doc the caller just passed, never a stale one.
+// The phase-1 constructor-signature path short-circuits before
+// getCompletionsAtPosition only when the `new Identifier(` context matches.
 export function getCompletions(
   code: string,
   pos: number,
@@ -174,6 +214,9 @@ export function getCompletions(
     await ensureLibs(["lib.es2021.d.ts", "lib.dom.d.ts"])
     if (!service) service = ts.createLanguageService(makeHost(ts))
     const svc = service
+
+    const ctor = constructorSignatureEntries(code, pos, svc)
+    if (ctor.length) return ctor
 
     const info = svc.getCompletionsAtPosition("input.ts", pos, undefined)
     if (!info) return []
