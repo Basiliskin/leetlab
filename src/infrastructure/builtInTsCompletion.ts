@@ -224,6 +224,25 @@ export function buildUsageTemplateApply(
  * getCompletions await is a cheap null - absent runtime ts, aborted context,
  * empty result, or a thrown tsCheck call - so the source degrades exactly
  * like tsLint rather than ever surfacing [] or a pending completion.
+ *
+ * The whole body is wrapped in `setTimeout(..., 0)` so the synchronous TS
+ * LanguageService calls (`getCompletionsAtPosition` + the per-entry
+ * `getCompletionEntryDetails`) never run on the same task as the user's
+ * keystroke. With hundreds of built-in completions (`Array.*`, `Math.*`,
+ * etc.), the per-entry detail fetch is the dominant cost and was blocking
+ * the editor input pipeline on every typed character. Yielding the event
+ * loop lets the keystroke commit first; the LS results arrive one tick
+ * later, by which time CodeMirror's autocomplete has already opened the
+ * dropdown and will accept the resolved result.
+ *
+ * CodeMirror documents a CompletionSource as `(ctx) => CompletionResult |
+ * null | Promise<CompletionResult | null>`; the existing source already
+ * returned a Promise, so deferring the body preserves that contract - the
+ * promise just resolves a tick later than before.
+ *
+ * `context.aborted` is checked after the timeout fires: if the user typed
+ * past the trigger during the wait, the source still degrades to null
+ * rather than surfacing stale options for a cursor that no longer exists.
  */
 async function typeAwareCompletions(
   context: CompletionContext,
@@ -231,6 +250,13 @@ async function typeAwareCompletions(
 ): Promise<CompletionResult | null> {
   const ts = runtimeTs()
   if (!ts) return null
+  // Yield the event loop so the synchronous LS work runs on its own task,
+  // off the keystroke tick that triggered it. `requestIdleCallback` would
+  // be slightly nicer but isn't available in the test env (Node) or in
+  // every browser we care about - `setTimeout(0)` is the universally
+  // supported fallback.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  if (context.aborted) return null
   try {
     const code = context.state.doc.toString()
     const entries = await getCompletions(code, context.pos, ts)

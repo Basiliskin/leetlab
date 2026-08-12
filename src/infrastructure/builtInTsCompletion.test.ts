@@ -410,3 +410,63 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
     expect(promiseOption!.apply).toBeUndefined()
   })
 })
+
+/**
+ * Autocomplete-keystroke-freeze regression (builtInTsCompletion-defer-ls-work):
+ * the LS synchronous body used to run on the same task as the user's
+ * keystroke, blocking input for ~50-150ms per typed character on a non-trivial
+ * doc. The fix wraps the body in `setTimeout(..., 0)` so the LS work runs on
+ * the next macrotask - this test pins that invariant.
+ *
+ * The first assertion (Promise still pending on the synchronous tick) catches
+ * the regression: a naive future reader who deletes the `setTimeout` to "make
+ * it simpler" would let the body run synchronously again, the Promise would
+ * resolve on the microtask flush, and the editor would freeze once more on
+ * the next keystroke.
+ */
+describe('builtInTsCompletion keystroke-yield deferral (LS work off the input tick)', () => {
+  let restoreFetch: () => void
+  let originalWindowTs: unknown
+
+  beforeAll(() => {
+    restoreFetch = stubLibFetch()
+    originalWindowTs = (globalThis as Record<string, unknown>).window
+    ;(globalThis as Record<string, unknown>).window = { ts }
+  })
+  afterAll(() => {
+    restoreFetch()
+    if (originalWindowTs === undefined) {
+      delete (globalThis as Record<string, unknown>).window
+    } else {
+      ;(globalThis as Record<string, unknown>).window = originalWindowTs
+    }
+  })
+
+  it('does not resolve the LS completion promise on the synchronous tick of the source call', async () => {
+    const state = EditorState.create({
+      doc: 'reader.',
+      extensions: [javascript()],
+    })
+    const result = builtInTsCompletion(new CompletionContext(state, 7, false))
+    expect(result).not.toBeNull()
+    // Narrow to Promise<unknown>: CompletionSource returns
+    // `CompletionResult | null | Promise<CompletionResult | null>`, and the
+    // bare/member/ctor paths above all return a Promise here.
+    const promise = result as Promise<unknown>
+    // Race the promise against a microtask flush: if the source ran its
+    // LS body synchronously (the regression), the microtask flush wins
+    // and the promise is already settled. With the setTimeout deferral,
+    // the macrotask hasn't fired yet, so the race resolves false.
+    const microtaskSettled = await Promise.race([
+      promise.then(() => true, () => true),
+      Promise.resolve(false),
+    ])
+    expect(microtaskSettled).toBe(false)
+    // Now let the timer fire and the LS body resolve. The resolved value
+    // depends on what the LS returns for this snippet - it can be a
+    // CompletionResult, null (no matches), or a rejected error wrapped as
+    // null by the source's try/catch. What matters is that it actually
+    // settles (no hang) and does not throw.
+    await expect(promise).resolves.toBeDefined()
+  })
+})

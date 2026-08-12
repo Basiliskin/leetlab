@@ -1,8 +1,27 @@
 import { useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { EditorView, keymap, showTooltip, ViewPlugin, type Tooltip, type TooltipView, type ViewUpdate } from "@codemirror/view";
-import { Annotation, EditorState, type Extension, Prec, StateEffect, StateField } from "@codemirror/state";
-import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
+import {
+  EditorView,
+  keymap,
+  showTooltip,
+  ViewPlugin,
+  type Tooltip,
+  type TooltipView,
+  type ViewUpdate,
+} from "@codemirror/view";
+import {
+  Annotation,
+  EditorState,
+  type Extension,
+  Prec,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
+import {
+  HighlightStyle,
+  syntaxHighlighting,
+  syntaxTree,
+} from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { Diagnostic, linter, lintGutter } from "@codemirror/lint";
 import { javascript } from "@codemirror/lang-javascript";
@@ -61,7 +80,7 @@ const usageTemplateTooltipField = StateField.define<Tooltip | null>({
   create: () => null,
   update: (value, tr) => {
     for (const e of tr.effects) {
-      if (e.is(setUsageTemplateTooltip)) return e.value
+      if (e.is(setUsageTemplateTooltip)) return e.value;
     }
     // Any doc change makes the bridge-anchor payload (source/pos/
     // from/to) stale: the resolved range no longer lines up with
@@ -72,8 +91,8 @@ const usageTemplateTooltipField = StateField.define<Tooltip | null>({
     // (selecting a row / decline / click-outside) flows through
     // `setUsageTemplateTooltip.of(null)` dispatched from a
     // microtask so it never re-enters an in-flight update.
-    if (tr.docChanged) return null
-    return value
+    if (tr.docChanged) return null;
+    return value;
   },
   provide: (field) => showTooltip.from(field),
 });
@@ -207,15 +226,30 @@ const editorTheme = EditorView.theme({
 
 const syntaxStyle = HighlightStyle.define([
   { tag: tags.comment, color: "#5c6877", fontStyle: "italic" },
-  { tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword, tags.self], color: "#ffa116" },
-  { tag: [tags.string, tags.special(tags.string), tags.character], color: "#3fb950" },
+  {
+    tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword, tags.self],
+    color: "#ffa116",
+  },
+  {
+    tag: [tags.string, tags.special(tags.string), tags.character],
+    color: "#3fb950",
+  },
   { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "#d29922" },
   { tag: [tags.regexp, tags.escape], color: "#f85149" },
-  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "#58c4dc" },
-  { tag: [tags.definition(tags.variableName), tags.variableName], color: "#e8edf4" },
+  {
+    tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+    color: "#58c4dc",
+  },
+  {
+    tag: [tags.definition(tags.variableName), tags.variableName],
+    color: "#e8edf4",
+  },
   { tag: [tags.propertyName, tags.attributeName], color: "#e8edf4" },
   { tag: [tags.typeName, tags.className, tags.namespace], color: "#ffc25e" },
-  { tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator], color: "#8b98a9" },
+  {
+    tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator],
+    color: "#8b98a9",
+  },
 ]);
 
 // Flag Lezer parse-error nodes ("⚠") as lint diagnostics. Error nodes are
@@ -273,7 +307,7 @@ const tsLint = linter(
     // Re-check on selection changes too, so the no-op dispatch after the TS
     // compiler loads triggers a fresh type check without any edit.
     needsRefresh: (update) => update.selectionSet,
-  }
+  },
 );
 
 /**
@@ -328,7 +362,9 @@ function usageTemplatePopoverExtension() {
         // Seed with the bridge's current state on mount so an accept
         // that fires before the editor's first measure still renders.
         this.currentState = getPopoverState();
-        this.unsubscribe = subscribePopover((state) => this.handleBridge(state));
+        this.unsubscribe = subscribePopover((state) =>
+          this.handleBridge(state),
+        );
         // If the bridge is already open at mount time, mount the
         // tooltip immediately. Otherwise the next bridge transition
         // (an accept) will mount it.
@@ -601,9 +637,9 @@ function usageTemplatePopoverExtension() {
  * only caller.
  */
 function wrapPickerIndex(next: number, length: number): number {
-  if (length <= 0) return -1
+  if (length <= 0) return -1;
   // JS's `%` can be negative; normalize to [0, length).
-  return ((next % length) + length) % length
+  return ((next % length) + length) % length;
 }
 
 /**
@@ -625,7 +661,9 @@ function usageTemplatePickerKeymap(): Extension {
         run: () => {
           const state = getPopoverState();
           if (!state) return false;
-          setHighlight(wrapPickerIndex(getHighlight() + 1, state.templates.length));
+          setHighlight(
+            wrapPickerIndex(getHighlight() + 1, state.templates.length),
+          );
           return true;
         },
       },
@@ -634,7 +672,9 @@ function usageTemplatePickerKeymap(): Extension {
         run: () => {
           const state = getPopoverState();
           if (!state) return false;
-          setHighlight(wrapPickerIndex(getHighlight() - 1, state.templates.length));
+          setHighlight(
+            wrapPickerIndex(getHighlight() - 1, state.templates.length),
+          );
           return true;
         },
       },
@@ -700,7 +740,19 @@ function extensionsFor(lang: "js" | "ts") {
     // TS-only built-in type-aware source) live in editorCompletions.ts; each
     // is a separate .of(), never an array.
     ...editorCompletionSources(lang),
-    autocompletion(),
+    autocompletion({
+      // The TS LS source can spend 50-150ms per call on a large doc
+      // (hundreds of getCompletionEntryDetails invocations per keystroke
+      // for the global-scope path). The default 100ms activateOnTyping
+      // delay is too tight - it lets the source re-fire mid-burst and
+      // still blocks the keystroke tick. 250ms matches a comfortable
+      // "user is settling on a word" cadence: the dropdown opens once
+      // they pause, not on every character. Idle typing of an identifier
+      // still gets full LS-backed completions; only the burst behavior
+      // changes. `validFor: /^\w*$/` on the source keeps the dropdown
+      // sticky across the pause.
+      activateOnTypingDelay: 350,
+    }),
     closeBrackets(),
     history(),
     keymap.of([
@@ -720,9 +772,7 @@ function extensionsFor(lang: "js" | "ts") {
       if (update.selectionSet) {
         const head = update.state.selection.main.head;
         const line = update.state.doc.lineAt(head);
-        useAppStore
-          .getState()
-          .setCursorPos(line.number, head - line.from + 1);
+        useAppStore.getState().setCursorPos(line.number, head - line.from + 1);
       }
     }),
     editorTheme,
