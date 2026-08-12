@@ -1,0 +1,575 @@
+{
+  "task": "currently codeeditor missing a lot of autocompletes: 1. for example `const reader: ReadableStream = new ReadableStream();` - user doesnt know what arguments and how many, what types. 2. when user type \"reader.\" also no autocomplete on existing properties or methods",
+  "analysis": {
+    "objective": "Make the CodeMirror editor complete built-in JS/TS standard-library types: typing a constructor call like `new ReadableStream(` surfaces its parameter signatures (count + types) and typing `reader.` on a value of a built-in type surfaces that type's public members.",
+    "successDefinition": "In TS-mode CodeEditor: (1) typing `new ReadableStream()` (and representative built-ins Promise, Map, Set, Array, Date, JSON, Math, console) shows a completion whose detail/apply text spells out the constructor's parameters — names, types, and arity; (2) after `const reader: ReadableStream = new ReadableStream();`, typing `reader.` lists ReadableStream's public members (e.g. getReader, cancel, pipeTo) filtered to member context, not global scope; (3) existing service-handle completions (`redis.` etc. from serviceCompletions) and global-name completions still work and win over generic member completions where they overlap; (4) offline/CDN-unavailable fallback behaves exactly like tsLint — degrades to the current scope+service sources rather than hanging; (5) `npm run build`, `npm run lint`, and `npm run test` all stay green with new tests covering the two cases.",
+    "assumptions": [
+      "The right mechanism is a third async CompletionSource backed by the existing TS LanguageService host in tsCheck.ts, which already seeds lib.es2021.d.ts + lib.dom.d.ts — so ReadableStream (a DOM lib type) is already in scope with no new CDN dependencies.",
+      "The runtime TypeScript compiler (5.4.5 loaded from CDN via tsCompiler, per tsCheck's LIB_BASE) is the one the completion LanguageService uses; the ~6.0.2 devDependency is not the runtime completion engine.",
+      "Completion content should reflect what the sandbox worker actually exposes, consistent with how sandboxAmbient.ts describes service globals; existing scopeCompletionSource(globalThis) and sandboxServiceCompletions are left intact and the new source composes alongside them.",
+      "A unit test driving the LanguageService completion directly (via the existing tsCheck/tsCompiler test harness, e.g. sandboxAmbient.test / sandboxE2E) is an acceptable measurable check; a full CodeMirror DOM e2e is not required.",
+      "Curated, hand-written built-in type tables are NOT the target mechanism — inference from the user's annotations/expressions must drive member and signature completion."
+    ],
+    "risks": [
+      "Cold-start latency: lib.d.ts is fetched lazily from jsDelivr, so the first `new ReadableStream(` or `reader.` on an uncached run may be slow or empty until libs are fetched and cached; the source must warm/cache like ensureLibs and degrade to existing sources meanwhile.",
+      "Async-vs-sync composition: the new source is async while the two existing sources are sync; CodeMirror merges them, so stale/racing completions and ordering vs the `redis.` service completions need explicit care to avoid the service members being shadowed.",
+      "Inference fragility: `reader.` completion depends on the LS parsing the current doc and resolving the declared type; unrelated type errors in the doc (from tsLint) can thin out completions, so the source must tolerate partial/erroneous documents.",
+      "Offline/unreachable-CDN behavior must degrade to the current sources and not leave a pending completion hanging — mirroring the existing tsLint fallback path.",
+      "TS version drift (runtime 5.4.5 vs devDep ~6.0.2) means completion output in tests could differ from what the CDN compiler returns; tests should pin expectations conservatively and the mechanism should tolerate missing/extra members.",
+      "If the sandbox runtime globals diverge from lib.dom.d.ts (e.g. worker lacks some DOM APIs ReadableStream relies on), completions may advertise members that fail at runtime; mitigate by aligning with sandboxAmbient just as service completions do."
+    ],
+    "outOfScope": [
+      "Monaco editor migration or parity — the repo ships monaco too, but this task is CodeMirror-only built-in completion.",
+      "Full IDE IntelliSense (go-to-definition, hover, rename, separate signature-help popup) — only completion list + parameter detail/apply text is required.",
+      "Completion for user-defined types, imported modules, or cross-file symbols — scoped strictly to built-in JS/TS standard-library globals.",
+      "Adding service-handle completions or editing sandboxAmbient service declarations — those are owned by prior roadmap phases and only reused here as an existing pattern.",
+      "Changing the tsCheck/tsCompiler lib seed set — current es2021+dom is assumed sufficient for the requested built-ins.",
+      "Non-JS/TS completion (CSS/JSON/HTML) — the editor targets js/ts modes only."
+    ],
+    "domainShape": "technical",
+    "domainShapeReason": "The objective is editor/tooling machinery — wiring type-aware autocomplete into a CodeMirror editor — not a business entity, rule, or workflow a domain expert would recognize.",
+    "ubiquitousLanguage": [
+      { "term": "CompletionSource", "meaning": "A CodeMirror autocomplete extension function that returns candidate completions at a cursor position; the existing two are scopeCompletionSource(globalThis) and sandboxServiceCompletions." },
+      { "term": "LanguageService host", "meaning": "The TypeScript compiler service host tsCheck.ts already builds, which serves lib.d.ts and the sandboxAmbient declarations and is the engine for type-aware completion." },
+      { "term": "constructor signature completion", "meaning": "Completions shown while typing a `new Type(` call that spell out the constructor's parameters — count, names, and types." },
+      { "term": "member completion", "meaning": "Completions shown after `expr.` that list the resolved type's public properties and methods." },
+      { "term": "lib.d.ts seeding", "meaning": "The fetched TypeScript declaration libraries (lib.es2021.d.ts, lib.dom.d.ts) the LanguageService resolves types against; ReadableStream comes from the dom lib." },
+      { "term": "sandbox ambient declarations", "meaning": "The synthetic .d.ts (sandboxAmbient.ts) that declares the 5 service globals with real types and defines what completion should match at runtime." },
+      { "term": "offline degradation", "meaning": "The fallback path, identical to tsLint's, where the editor returns to scope+service completions when the CDN TypeScript compiler or libs are unavailable." },
+      { "term": "CodeMirror completion source composition", "meaning": "How the new async builtInTsCompletion source composes beside the two existing sync sources (scopeCompletionSource, sandboxServiceCompletions) via separate javascriptLanguage.data.of({ autocomplete }) facet entries." },
+      { "term": "CodeEditor editor wiring", "meaning": "The CodeEditor.tsx extensionsFor(lang) facet assembly where completion sources are registered, conditioned on lang ('js' | 'ts')." }
+    ]
+  },
+  "discoveryFindings": [
+    {
+      "area": "tsCheck LanguageService host — completion API surface",
+      "finding": "tsCheck.ts exposes exactly one function, `checkCode(code, ts)`, which runs `getSyntacticDiagnostics` + `getSemanticDiagnostics('input.ts')` and maps them to {from,to,severity,message}. There is NO completion API anywhere in the repo — grep for getCompletionsAtPosition/getCompletionEntryDetails/getSignatureHelpItems/getQuickInfoAtPosition across src/ returns zero hits. The LanguageService singleton (`let service`), the host (`makeHost`), `currentCode`, `version`, and the lib caches (`libFetch`, `libTexts`) are all module-private.",
+      "filePath": "src/infrastructure/tsCheck.ts",
+      "implication": "The plan must ADD a completion entrypoint (e.g. `getCompletions(code, pos, ts)`) in tsCheck.ts itself — it cannot be a new module calling into tsCheck, because host/service/currentCode are not exported. The new function should mutate the same `currentCode`/`version` module state (and reuse `ensureLibs`/`makeHost`/the singleton) so the LS parses the live document; a fresh completion call that doesn't bump version/currentCode would serve stale snapshots (getScriptVersion returns String(version), which only checkCode increments)."
+    },
+    {
+      "area": "tsCheck lib seeding — ReadableStream availability",
+      "finding": "The host's getCompilationSettings seeds lib: ['lib.es2021.d.ts', 'lib.dom.d.ts'] with getDefaultLibFileName 'lib.es2021.d.ts'. ensureLibs recursively fetches the `/// <reference lib>` closure from jsDelivr (LIB_BASE = https://cdn.jsdelivr.net/npm/typescript@5.4.5/lib/) and caches text in module-level Maps that persist across calls. ReadableStream is a DOM lib type, so it is already in scope with no new CDN dependency — the Stage 1 assumption is CONFIRMED.",
+      "filePath": "src/infrastructure/tsCheck.ts",
+      "implication": "No lib-seed change is needed; the objective's built-ins (ReadableStream, Promise, Map, Set, Array, Date, JSON, Math, console) are all reachable via es2021+dom. The completion source must await the SAME `ensureLibs(['lib.es2021.d.ts','lib.dom.d.ts'])` warm-up before calling the LS so libs are loaded."
+    },
+    {
+      "area": "tsCheck cold-start / offline fallback",
+      "finding": "Libs are fetched lazily on the first checkCode (no warm-up at module load). Offline/unreachable-CDN, fetchLib rejects -> ensureLibs rejects -> checkCode's promise rejects; in CodeEditor the tsLint try/catch then falls back to `syntaxDiag(view)` (parser-only). There is no cached-bundle or local lib fallback in production code (tests stub fetch instead).",
+      "filePath": "src/infrastructure/tsCheck.ts",
+      "implication": "The new completion source must mirror tsLint exactly: await ensureLibs, and on any throw return null (fall through to the existing sync sources) rather than leaving a pending/empty completion. Success criterion (4) is achievable with the same try/catch pattern already used by tsLint. Cold-start latency on first `new ReadableStream(` is a real risk — libs are fetched on demand, not pre-warmed."
+    },
+    {
+      "area": "Runtime vs test TypeScript engine — version drift",
+      "finding": "The runtime completion/lint engine is `window.ts` = typescript@5.4.5 loaded from the jsDelivr CDN by tsCompiler.load() via a <script> tag. tsLint in CodeEditor checks `(window as {ts?}).ts` and passes it to checkCode. In tests (sandboxAmbient.test.ts) the imported LOCAL devDependency `typescript` (~6.0.2) is passed to checkCode directly, with globalThis.fetch stubbed to serve libs from node_modules/typescript/lib. So the test harness drives the LS with 6.0.2 while the browser uses 5.4.5 — the Stage 1 version-drift risk is CONFIRMED.",
+      "filePath": "src/infrastructure/sandboxAmbient.test.ts",
+      "implication": "A completion unit test should use the same harness: stub globalThis.fetch to serve node_modules/typescript/lib and pass the local ts. Tests must assert conservative facts (presence of key members/params) tolerant of 5.4.5-vs-6.0.2 output differences, exactly as the plan's risk section warns. Also note the singleton `service` is created once per process with whatever ts is passed first — test files calling checkCode mutate shared module state."
+    },
+    {
+      "area": "Existing completion sources — sync vs async composition",
+      "finding": "Both existing CompletionSources are SYNC. sandboxServiceCompletions is a sync function returning a plain result object (or null) built at module load from runtime prototype introspection of SANDBOX_SERVICE_CONSTRUCTORS via publicMethodsOf/paramsOf (params derived from fn.toString(), e.g. '(key, value)'). scopeCompletionSource(globalThis) is the lang-javascript built-in. There is NO existing async CompletionSource in the repo — the new TS-backed source would be the first.",
+      "filePath": "src/infrastructure/serviceCompletions.ts",
+      "implication": "The new source is async while the two existing ones are sync; CodeMirror merges all facet sources, so ordering/staleness vs the `redis.` service completions must be handled explicitly (the Stage 1 risk is real and unaddressed by existing code). Because sandboxServiceCompletions returns non-null for `handle.` and null otherwise, a new source must ensure it does not shadow service members where the service source already matched — the service source should win for the 5 handles."
+    },
+    {
+      "area": "sandboxServiceCompletions data source — NOT the ambient text",
+      "finding": "Contrary to one Stage 1 assumption, service completions do NOT draw on sandboxAmbient.ts. sandboxServiceCompletions introspects live prototypes (runtime introspection), while sandboxAmbient.ts only feeds the LanguageService host for diagnostics (5 `declare const` globals via import() type queries in one synthetic /src/sandbox-ambient.d.ts). The two share SANDBOX_SERVICE_CONSTRUCTORS as their common source of truth, but completion data is runtime-derived.",
+      "filePath": "src/infrastructure/sandboxAmbient.ts",
+      "implication": "The new built-in source is orthogonal to both: it needs no changes to serviceCompletions or sandboxAmbient. But this means the new source WILL also resolve `redis`/`pg`/etc. via the LS (they're typed by the ambient file), so dedupe/priority against sandboxServiceCompletions is required — the plan cannot rely on 'consistent with sandboxAmbient' as an alignment mechanism; it must explicitly prefer the sync service source for the 5 handle names."
+    },
+    {
+      "area": "CodeEditor extension wiring — where the new source plugs in",
+      "finding": "CodeEditor mounts exactly one EditorView; completions are wired as TWO deliberate separate `javascriptLanguage.data.of({ autocomplete: ... })` facet entries (scope first, then sandboxServiceCompletions) — a comment in the file notes an array there would be treated as a static completion list, not more sources — plus autocompletion()/closeBrackets(). TS mode is `javascript({typescript: true})`. lang is a 'js'|'ts' string; tsLint is only active in TS mode.",
+      "filePath": "src/components/CodeEditor.tsx",
+      "implication": "The new source should be added as a THIRD `javascriptLanguage.data.of({ autocomplete: builtInTsCompletion })` entry (its own .of, mirroring the existing pattern), conditionally included only when lang === 'ts'. This is the correct composition point and matches the established convention; no other wiring exists to extend."
+    },
+    {
+      "area": "Why the user's two cases fail today",
+      "finding": "scopeCompletionSource(globalThis) provides identifier-level completion (globals + in-document locals derived from the syntax tree) but is NOT type-aware: after `reader.` it has no notion of ReadableStream's members because scope completion does not resolve declared types, so `reader.` yields nothing (service source returns null for non-handle expressions). For `new ReadableStream(`, the identifier itself may complete as a global, but no parameter/arity info is produced. This confirms the user's report and the 'no existing constructor-arg completion' assumption.",
+      "filePath": "src/components/CodeEditor.tsx",
+      "implication": "The mechanism genuinely needs the LanguageService's getCompletionsAtPosition (member context) and getCompletionEntryDetails/signature data (constructor params) — there is no existing code path to extend for either. The plan is additive on the LS side, not a fix to an existing source."
+    },
+    {
+      "area": "Monaco presence",
+      "finding": "@monaco-editor/react ^4.7.0 is in package.json dependencies but is unused — grep for monaco/Monaco across src/ and index.html returns zero matches. AGENTS.md confirms: 'remains in package.json but is unused'.",
+      "filePath": "package.json",
+      "implication": "Confirmed Stage 1 out-of-scope note: this task is CodeMirror-only; no Monaco parity or migration work exists to reconcile against."
+    },
+    {
+      "area": "Test harness for a new completion unit test",
+      "finding": "Two reusable harness patterns exist and neither needs a DOM editor. serviceCompletions.test.ts builds a fake `new CompletionContext(state, pos, false)` from an EditorState and calls the source directly (works for async sources too — the source is awaited). sandboxAmbient.test.ts stubs globalThis.fetch to serve node_modules/typescript/lib and calls checkCode(code, ts) with the local ts. vitest runs in the default node environment (no jsdom/happy-dom installed, no vitest config or setup file).",
+      "filePath": "src/infrastructure/serviceCompletions.test.ts",
+      "implication": "A new test file can (a) drive a new tsCheck completion function via the sandboxAmbient stub-fetch pattern, and (b) optionally drive the new CompletionSource via the serviceCompletions CompletionContext pattern — no CodeMirror DOM e2e needed. Tests must run in node env (no DOM), so the source must be callable with a synthetic context. These two harnesses confirm the plan's 'unit test is acceptable' assumption."
+    },
+    {
+      "area": "CodeMirror Completion rendering precedent",
+      "finding": "The only existing precedent for rendering parameter info into a completion is sandboxServiceCompletions, which sets `detail` from `paramsOf(fn)` = fn.toString() parsing, producing strings like '(key, value)' with validFor /^[\w$]*$/ and hand-computed `from` offsets. There is no existing rendering of constructor arity/type signatures from type info.",
+      "filePath": "src/infrastructure/serviceCompletions.ts",
+      "implication": "The new source must write its own rendering of TS getCompletionEntryDetails displayParts/kind into CodeMirror detail/apply text for constructor calls (e.g. 'new ReadableStream(underlyingSource?: ..., strategy?: ...)'). There's a stylistic precedent (detail = signature text) but no code to reuse; this is net-new surface area, and service tests assert detail starts with '(' and ends with ')' — a convention the new source could follow for consistency."
+    },
+    {
+      "area": "tsStatus gate / no-op dispatch pattern",
+      "finding": "The store tracks tsStatus: 'loading' | 'ready' | 'fallback' (initialized 'loading', set by EditorPane after tsCompiler.load()). CodeEditor's updateListener effect dispatches a no-op selection annotation after tsStatus changes so tsLint re-runs once window.ts finishes loading. CodeEditor does not currently gate completion on tsStatus — it is always active.",
+      "filePath": "src/infrastructure/store.ts",
+      "implication": "A TS completion source that depends on window.ts can reuse the same readiness signal: while tsStatus is 'loading'/'fallback' (or window.ts is absent) it should return null and let the existing sync sources handle completion, exactly mirroring tsLint's guard. This is the cleanest existing pattern to satisfy the offline-degradation and cold-start success criteria."
+    }
+  ],
+  "requiredMaterials": [],
+  "phases": [
+    {
+      "id": "tscheck-completion-entrypoint",
+      "order": 0,
+      "name": "Expose getCompletions from the tsCheck LanguageService host",
+      "goal": "Add the missing type-aware completion entrypoint in tsCheck.ts (the only module with access to the LanguageService host): getCompletions(code, pos, ts) that bumps the same module-private currentCode/version checkCode uses (so the singleton parses the live document instead of a stale snapshot), awaits the same ensureLibs(['lib.es2021.d.ts','lib.dom.d.ts']) warm-up (ReadableStream is already reachable via the seeded dom lib), and returns getCompletionsAtPosition entries with kind and detail so the editor can render member completion for declared built-in types. This satisfies the discovery finding that no completion API exists anywhere and host/service/currentCode/version are module-private.",
+      "boundedContext": "tsCheck LanguageService host",
+      "layer": "infrastructure",
+      "blastRadius": "medium",
+      "inputs": [
+        "tsCheck.ts module-private host (service, makeHost, ensureLibs, currentCode, version)",
+        "sandboxAmbient.test.ts stubLibFetch harness serving node_modules/typescript/lib",
+        "local typescript devDependency (~6.0.2) as the test engine"
+      ],
+      "expectedResult": "Exported getCompletions(code, pos, ts) in tsCheck.ts returning completion entries (name, kind, sortText) with getCompletionEntryDetails-backed detail, plus a unit test (stubbed fetch, local ts) proving that for `const reader: ReadableStream = new ReadableStream();` the position after `reader.` yields ReadableStream's public members (getReader, cancel, pipeTo) rather than global scope.",
+      "dependsOn": [],
+      "rubric": [
+        {
+          "id": "exported-entrypoint",
+          "label": "getCompletions exported from tsCheck.ts with the right signature",
+          "ruleStatement": "tsCheck.ts (the only module with LanguageService-host access) must export a named getCompletions(code, pos, ts) that the editor layer can import; the host/service/currentCode/version members it depends on must still be resolvable from within the module.",
+          "passCriteria": [
+            "getCompletions is a named export of tsCheck.ts, not a local or comment",
+            "Signature is getCompletions(code, pos, ts) — three parameters in that order",
+            "No other module re-implements the entrypoint or reaches into host internals to fabricate completions",
+            "Calling it does not require callers to construct their own LanguageService host"
+          ],
+          "failureExamples": [
+            "Function exists but is not exported (import fails in the editor)",
+            "Signature differs (e.g., bundled ts, no pos) so the editor passes the wrong arguments",
+            "Throws on first call because service/host/ensureLibs are out of module scope"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "live-document-freshness",
+          "label": "Completions resolve against the live document, not a stale snapshot",
+          "ruleStatement": "getCompletions must bump the same module-private currentCode/version that checkCode uses before resolving, so the singleton program reflects the code actually passed in the call rather than whatever the host last parsed.",
+          "passCriteria": [
+            "getCompletions assigns currentCode = code and advances version (same mechanism as checkCode) before calling getCompletionsAtPosition",
+            "Behavioral check: parse document A first (via checkCode or a prior call), then call getCompletions on document B and assert completions reference symbols only present in B",
+            "A second call with different input returns completions for the new input, never the prior document's symbols"
+          ],
+          "failureExamples": [
+            "Parse doc A, then getCompletions(doc B, pos) returns symbols that only exist in doc A",
+            "version never increments so getCompletionsAtPosition resolves against a stale program and yields wrong/empty results",
+            "Freshness only works by accident of argument ordering in a single test"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "lib-seeding-warmup",
+          "label": "Dom and ES libs are seeded before completion so built-in types resolve",
+          "ruleStatement": "getCompletions must await the same ensureLibs(['lib.es2021.d.ts','lib.dom.d.ts']) warm-up checkCode uses, so a dom-provided type like ReadableStream resolves to its real members and completion works offline via the stubbed-fetch harness.",
+          "passCriteria": [
+            "getCompletions awaits ensureLibs covering both lib.es2021.d.ts and lib.dom.d.ts before resolving",
+            "The unit test runs against the stubbed-fetch harness serving node_modules/typescript/lib (no network)",
+            "No second/divergent fetch path for libs that could silently drop the dom lib"
+          ],
+          "failureExamples": [
+            "Dom lib not seeded so ReadableStream resolves to any/empty and member completion is blank",
+            "Completions work for ES types but not dom types (ReadableStream) in the stubbed-fetch test",
+            "Test makes a real network fetch, so it passes on a live machine but not offline"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "member-completion-correctness",
+          "label": "Position after 'reader.' yields ReadableStream's public members, not global scope",
+          "ruleStatement": "For `const reader: ReadableStream = new ReadableStream();`, the position after `reader.` must yield ReadableStream's public members (getReader, cancel, pipeTo) rather than global-scope members — this is the phase's core proof that type-aware member completion works.",
+          "passCriteria": [
+            "A unit test (stubbed fetch, local typescript devDependency) covers exactly that declaration and position",
+            "The test asserts getReader, cancel, and pipeTo are all present among the candidates",
+            "The test asserts at least one global-scope-only name is absent (e.g., a globalThis/scope-only symbol not in ReadableStream) so the assertion is strong, not just 'some completions exist'"
+          ],
+          "failureExamples": [
+            "Test only asserts that any non-empty completion list is returned (weak, would pass for scope completions)",
+            "Candidates are global scope members (e.g., window/globalThis members) rather than type members",
+            "getReader/cancel/pipeTo are missing because the position or type annotation resolution is off"
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "editor-render-payload",
+          "label": "Entries carry the payload the editor needs to render members",
+          "ruleStatement": "Returned entries must expose name, kind, and sortText, with detail backed by getCompletionEntryDetails, so the editor can render the member completion and its signature/kind without guessing.",
+          "passCriteria": [
+            "Each returned entry has a name, a kind, and a sortText field populated",
+            "detail is produced via getCompletionEntryDetails for at least the sample entries (not a hardcoded/empty stub)",
+            "The unit test asserts non-empty detail and a real kind value on a representative entry"
+          ],
+          "failureExamples": [
+            "Entries carry only name; kind/sortText are undefined",
+            "detail is always the empty string because getCompletionEntryDetails is never invoked",
+            "Editor would have to re-derive type info client-side to render the completion"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "repeatability-no-host-corruption",
+          "label": "Repeated and interleaved calls stay consistent and don't corrupt the shared host",
+          "ruleStatement": "Because this phase mutates shared module-private state (currentCode/version), the entrypoint must be repeatable and must not leave the host in a state that breaks subsequent getCompletions or checkCode calls.",
+          "passCriteria": [
+            "Two identical getCompletions(code, pos) calls return the same member set (no version-bump drift)",
+            "A getCompletions call followed by a checkCode call on the same document yields the same diagnostics as checkCode alone",
+            "A sequence of mixed getCompletions/checkCode calls completes without throwing"
+          ],
+          "failureExamples": [
+            "First getCompletions works, second throws or returns a different member set for identical input",
+            "Calling getCompletions leaves version/currentCode inconsistent so a following checkCode misses errors",
+            "State leaks across calls, making results order-dependent"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is that getCompletions returns global-scope completions or empty results because it doesn't bump the same module-private currentCode/version checkCode uses and skips the dom lib in ensureLibs — fix by reusing checkCode's exact currentCode/version bump lines and awaiting ensureLibs(['lib.es2021.d.ts','lib.dom.d.ts']) before resolving, then confirm the stubbed-fetch test surfaces getReader, cancel, and pipeTo."
+    },
+    {
+      "id": "tscheck-constructor-signature-completion",
+      "order": 1,
+      "name": "Surface constructor parameter signatures through the tsCheck host",
+      "goal": "Handle the user's first case at the LanguageService level: detect the `new Identifier(` cursor context and produce a completion whose detail/apply text spells out the constructor's parameters — names, types, and arity (e.g. `new ReadableStream(underlyingSource?: ReadableStreamUnderlyingSource, strategy?: QueuingStrategy)`) — rendered from TypeScript getCompletionEntryDetails displayParts into the '('...')' style sandboxServiceCompletions already uses. Reuses the ensureLibs/currentCode/version/singleton pattern established in phase 0; nothing about getSignatureHelpItems as a separate popup is required (explicitly out of scope).",
+      "boundedContext": "tsCheck LanguageService host",
+      "layer": "infrastructure",
+      "blastRadius": "medium",
+      "inputs": [
+        "getCompletions entrypoint and the module-state/ensureLibs/singleton pattern from phase 0",
+        "TypeScript getCompletionEntryDetails/displayParts API for signature rendering",
+        "sandboxAmbient.test.ts stubLibFetch harness",
+        "serviceCompletions '('...')' detail rendering convention"
+      ],
+      "expectedResult": "A constructor-signature completion path in tsCheck.ts that, given code ending in `new ReadableStream(` (and representative built-ins Promise, Map, Set, Array, Date, JSON, Math, console), returns a completion entry whose detail spells out the constructor's parameter names, types, and count, plus a unit test asserting that rendered signature.",
+      "dependsOn": ["tscheck-completion-entrypoint"],
+      "rubric": [
+        {
+          "id": "signature-fidelity",
+          "label": "Constructor signature fidelity",
+          "ruleStatement": "For a cursor inside `new Identifier(` on any representative built-in, the returned completion's detail/apply text spells out the constructor's parameter names, types, optionality, and count, resolved from the seeded libs.",
+          "passCriteria": [
+            "`new ReadableStream(` renders a signature naming `underlyingSource` of type `ReadableStreamUnderlyingSource` (optional) and `strategy` of type `QueuingStrategy` (optional) — exactly 2 parameters with optional markers present.",
+            "Map, Set, Array, and Date each render the parameter counts and types declared in the seeded lib (e.g. Map/Set 0–1 optional iterable, Date's 0/1/7-arg constructor overloads), not a single hardcoded arity.",
+            "The detail is built from TypeScript getCompletionEntryDetails displayParts — no hardcoded per-type signature strings in the code path — and follows the same '('...')' convention sandboxServiceCompletions uses.",
+            "The full representative set (Promise, Map, Set, Array, Date, JSON, Math, console) completes without throwing; non-constructible globals (JSON, Math, console) never emit a fabricated constructor signature."
+          ],
+          "failureExamples": [
+            "`new ReadableStream(` yields an empty detail or a bare type name with no parameters.",
+            "Rendered names/types are wrong (e.g. `init?: object`) or optionality is dropped so `underlyingSource` reads as required.",
+            "Map/Set/Date show an incorrect arity (e.g. Map always 0, or Date only 1 parameter).",
+            "Typing `new JSON(` throws or crashes the completion.",
+            "A hardcoded string map like `{ ReadableStream: '...' }` supplies the signature instead of the language service."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "context-triggering",
+          "label": "Precise `new Identifier(` triggering",
+          "ruleStatement": "The constructor-signature path fires only at the `new Identifier(` cursor position and only through the existing phase-0 completion entrypoint; every other context returns the normal non-constructor completions.",
+          "passCriteria": [
+            "A cursor immediately after `new ReadableStream(` returns the constructor signature.",
+            "The same text with the cursor before `new` or mid-identifier returns ordinary completions, not the signature.",
+            "`ReadableStream(` without `new`, `ReadableStream.` (member access), and a bare `ReadableStream` value reference never surface the constructor signature.",
+            "The entry is delivered via the shared getCompletions/CompletionSource wiring from phase 0, not a parallel or duplicated path."
+          ],
+          "failureExamples": [
+            "The signature shows for `ReadableStream(` with no `new`.",
+            "No signature is returned when the cursor sits inside `new ReadableStream(`.",
+            "Constructor detail leaks into member-access or bare-identifier completions.",
+            "A second, unshared completion path bypasses the phase-0 entrypoint."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "offline-degradation",
+          "label": "Offline / missing-libs degradation preserved",
+          "ruleStatement": "When the CDN TypeScript compiler or libs are unavailable (ensureLibs not satisfied), the constructor path fails soft: no throw, no broken completion UI, and the editor returns scope+service completions exactly as tsLint's fallback.",
+          "passCriteria": [
+            "With libs not seeded, exercising the constructor path (and the entrypoint feeding it) completes without an unhandled rejection or exception.",
+            "Offline results match the tsLint-style scope+service completions; the constructor entry is absent rather than an error.",
+            "The phase-0 module-state/singleton/currentCode/version pattern is unchanged — no second host or divergent ensureLibs copy introduced.",
+            "Repeated invocations are deterministic: the same snippet returns the same completions and state is not corrupted between calls."
+          ],
+          "failureExamples": [
+            "Typing `new ReadableStream(` offline throws and blanks the suggestion list (console error / empty results).",
+            "The new path blocks on a synchronous CDN fetch offline, stalling all completions.",
+            "A separate ensureLibs/host copy was added that diverges from the shared singleton and re-fetches libs."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "signature-unit-test",
+          "label": "Unit test asserts the rendered signature",
+          "ruleStatement": "A committed unit test drives the real tsCheck.ts completion entrypoint with `new ReadableStream(`-style snippets through the sandboxAmbient.test.ts stubLibFetch harness and asserts the exact rendered signature, so regressions in names, types, or arity fail the build.",
+          "passCriteria": [
+            "The test invokes the actual tsCheck.ts completion path via the entrypoint (not a re-implementation or a mock that bypasses it).",
+            "It asserts the exact signature detail for `new ReadableStream(` — parameter names, types, optionality, and count — not merely non-emptiness.",
+            "At least one further representative built-in (Map, Set, or Date) is asserted for arity/names so the test fails if rendering is hardcoded to ReadableStream.",
+            "The test runs deterministically against stubLibFetch (no network, no live CDN) and is not skipped or flaky."
+          ],
+          "failureExamples": [
+            "Test asserts only `detail.length > 0` or that detail contains 'ReadableStream' — it passes even when parameters are dropped.",
+            "Test mocks the language service so a real rendering regression is invisible.",
+            "Test covers only ReadableStream and still passes if Map/Set/Date signatures are wrong or missing.",
+            "Test requires live network access and is skipped in CI."
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "Most likely fail: the ReadableStream case is made to pass by hardcoding or special-casing (or displayParts are parsed too narrowly so Map/Set/Date render empty/wrong and JSON/Math/console throw) — delete every per-type special case and render all representative built-ins through one shared getCompletionEntryDetails displayParts formatter, asserting each rendered signature in the unit test."
+    },
+    {
+      "id": "builtin-ts-completion-source",
+      "order": 2,
+      "name": "Build the async builtInTsCompletion CompletionSource",
+      "goal": "Compose a third, async CompletionSource (the repo's first) that calls the phase 0/1 tsCheck APIs to produce CodeMirror completions for both user cases: after `expr.` list the resolved type's public members filtered to member context (not globals), and at `new ReadableStream(` surface the constructor signature as the completion's detail. It must explicitly prefer the sync sources where they overlap: return null for the 5 sandbox service handles (redis, pg, rabbitmq, kafka, queue) so sandboxServiceCompletions keeps winning, and mirror tsLint's offline/cold-start degradation by returning null whenever window.ts is absent or the tsCheck call throws (never leaving a pending/empty completion). Follows the serviceCompletions rendering convention (detail text, validFor /^[\\w$]*$/, hand-computed from offsets).",
+      "boundedContext": "CodeMirror completion source composition",
+      "layer": "application",
+      "blastRadius": "medium",
+      "inputs": [
+        "getCompletions and constructor-signature APIs from tsCheck (phases 0 and 1)",
+        "sandboxServiceCompletions + scopeCompletionSource(globalThis) as the existing sync sources to compose beside",
+        "SANDBOX_SERVICE_CONSTRUCTORS handle names (redis, pg, rabbitmq, kafka, queue) for service pass-through",
+        "tsLint offline-guard pattern ((window as {ts?}).ts)",
+        "serviceCompletions.test.ts fake CompletionContext harness (works for awaited async sources)"
+      ],
+      "expectedResult": "The async builtInTsCompletion CompletionSource module with unit tests (fake CompletionContext) covering: (a) `reader.` on a typed ReadableStream lists its public members; (b) `new ReadableStream(` yields the constructor signature detail; (c) it returns null for the 5 service handles so sandboxServiceCompletions wins; (d) it returns null when window.ts is absent or ensureLibs/getCompletions throws, degrading exactly like tsLint.",
+      "dependsOn": ["tscheck-completion-entrypoint", "tscheck-constructor-signature-completion"],
+      "rubric": [
+        {
+          "id": "member-context-completion",
+          "label": "Member completion for built-in types",
+          "ruleStatement": "After an `expr.` member access, the source returns the resolved type's public members (properties and methods) scoped to member context — not global scope names.",
+          "passCriteria": [
+            "Typing `reader.` where reader has type ReadableStream yields completions for ReadableStream's public members (e.g., cancel, getReader, locked, pipeThrough, pipeTo, read).",
+            "The completions carry member-appropriate detail (member type/signature), and none are global/scope names (console, window, document).",
+            "A fake-CompletionContext unit test drives `reader.` on a typed ReadableStream and asserts the presence and count of public members."
+          ],
+          "failureExamples": [
+            "`reader.` surfaces global scope names instead of ReadableStream's members.",
+            "The member list is empty or omits clearly-public members such as read/cancel.",
+            "Members from unrelated lib.dom types leak in alongside ReadableStream's members."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "constructor-signature-detail",
+          "label": "Constructor signature as completion detail",
+          "ruleStatement": "At a `new Type(` call, the source surfaces the constructor's parameter signature — count and types — as the completion's detail text.",
+          "passCriteria": [
+            "Completing `new ReadableStream(` returns a ReadableStream completion whose detail spells out the constructor parameters with types (e.g., underlyingSource and strategy).",
+            "The parameter count matches the lib.dom.d.ts ReadableStream constructor declaration.",
+            "The unit test asserts the detail string is present and non-empty for `new ReadableStream(`."
+          ],
+          "failureExamples": [
+            "The completion appears but detail is empty/undefined.",
+            "The signature shows zero parameters, or a wrong count/types, versus the dom lib declaration.",
+            "The detail is plain help text rather than the actual parameter signature."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "service-handle-abstention",
+          "label": "Service handles pass through to sandboxServiceCompletions",
+          "ruleStatement": "The source returns null for exactly the 5 sandbox service handles (redis, pg, rabbitmq, kafka, queue) so sandboxServiceCompletions keeps winning, while still completing for every other identifier.",
+          "passCriteria": [
+            "For each of redis, pg, rabbitmq, kafka, queue — bare identifier, `handle.`, and `new handle(` — the source returns null (abstains).",
+            "The abstention list matches SANDBOX_SERVICE_CONSTRUCTORS, and a unit test enumerates all 5 handles.",
+            "For a non-service identifier (e.g., a user variable named stream), the source still returns completions rather than blanket-abstaining."
+          ],
+          "failureExamples": [
+            "The source completes over `redis.`/`pg.`/etc., shadowing sandboxServiceCompletions.",
+            "Only some of the 5 handles are covered, or the names are hardcoded differently from SANDBOX_SERVICE_CONSTRUCTORS.",
+            "The source abstains for all input, gutting the feature to keep the handles clean."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "offline-error-degradation",
+          "label": "Offline/cold-start degradation identical to tsLint",
+          "ruleStatement": "When window.ts is absent or the tsCheck call (ensureLibs/getCompletions) throws, the source returns null and never leaves a pending or empty completion — matching tsLint's offline behavior exactly.",
+          "passCriteria": [
+            "With window.ts undefined, guarded via `(window as {ts?}).ts`, the source returns null.",
+            "When ensureLibs or getCompletions throws, the error is caught and the source returns null — no exception escapes the CompletionSource and no unhandled promise rejection.",
+            "No code path returns an empty completion array ([]) or leaves the editor waiting on a pending completion in the offline/cold-start case.",
+            "Unit tests cover both the window.ts-absent case and the throwing case."
+          ],
+          "failureExamples": [
+            "The source returns [] instead of null when TypeScript is unavailable, leaving an empty completion popup.",
+            "A thrown error escapes the CompletionSource or surfaces as an unhandled rejection.",
+            "The guard reads a different property than tsLint's `(window as {ts?}).ts`, so the cold-start check never fires."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "rendering-convention",
+          "label": "serviceCompletions rendering convention",
+          "ruleStatement": "Returned completions follow the serviceCompletions rendering convention — human-readable detail text, validFor /^[\\w$]*$/, and match offsets hand-computed from the token range rather than left to CodeMirror.",
+          "passCriteria": [
+            "Every returned completion sets detail (readable signature/type text) and a validFor of /^[\\w$]*$/.",
+            "The from/to offsets are computed by the source from the token at the cursor — not delegated to CodeMirror's default matching.",
+            "The option shape (property names for detail/type/validFor) matches sandboxServiceCompletions so rendering is consistent."
+          ],
+          "failureExamples": [
+            "Completions omit validFor or use a different regex, so partial-word typing matches wrongly.",
+            "Offsets are computed with CodeMirror default auto \\w matching instead of hand-computed from the token.",
+            "Option fields are named differently from serviceCompletions, so the popup renders inconsistently."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "repeatable-safe-completion",
+          "label": "Safe under repeat and concurrent invocation",
+          "ruleStatement": "As the repo's first async CompletionSource, it is idempotent and repeatable: invoking it again while a cold-start seeding or a previous call is in flight, or right after a failure, neither double-seeds libs nor poisons subsequent calls; the cheap null paths (service handles, no window.ts) return null synchronously without awaiting libs.",
+          "passCriteria": [
+            "Two invocations made while the seeding promise is still pending complete without double-seeding or throwing.",
+            "After a getCompletions throw, a subsequent invocation either succeeds or abstains cleanly — the module is not left in a broken state.",
+            "The service-handle and window.ts-absent null paths short-circuit before any await, so the sync sources win without latency."
+          ],
+          "failureExamples": [
+            "The first failing call poisons the module so every later call also fails.",
+            "Concurrent calls during cold-start seed the CDN libs twice or interleave badly.",
+            "The null paths await the lib seeding, delaying sandboxServiceCompletions/scope completions behind cold-start."
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is the offline/cold-start path returning [] or throwing instead of null — guard `(window as {ts?}).ts` first and wrap the ensureLibs/getCompletions call in a try/catch that returns null before any await touches the libs."
+    },
+    {
+      "id": "codeeditor-wire-builtin-completion",
+      "order": 3,
+      "name": "Wire builtInTsCompletion into CodeEditor for TS mode",
+      "goal": "Register the new source as a third javascriptLanguage.data.of({ autocomplete: builtInTsCompletion }) facet entry in extensionsFor, included only when lang === 'ts' (mirroring the deliberate two-entry .of() pattern for scope + sandboxServiceCompletions; an array would be misread as a static completion list). JS mode and the existing sources stay untouched. The source's own window.ts guard (phase 2) already handles the tsStatus 'loading'/'fallback' cold-start/offline window the same way tsLint degrades, so no extra store gating is needed. This is the interface cut that makes the feature observable in the editor.",
+      "boundedContext": "CodeEditor editor wiring",
+      "layer": "interface",
+      "blastRadius": "small",
+      "inputs": [
+        "CodeEditor.tsx extensionsFor(lang) two-source facet wiring + autocompletion()",
+        "lang ('js'|'ts') string from useAppStore",
+        "builtInTsCompletion source (phase 2)"
+      ],
+      "expectedResult": "A third javascriptLanguage.data.of({ autocomplete: builtInTsCompletion }) facet entry in CodeEditor included only when lang === 'ts'; npm run build, npm run lint, and npm run test all stay green, and existing sandbox-service-handle completions (redis.) still win over generic member completions.",
+      "dependsOn": ["builtin-ts-completion-source"],
+      "rubric": [
+        {
+          "id": "builtin-source-wired-ts-only",
+          "label": "Third autocomplete source is wired for TS mode only",
+          "ruleStatement": "extensionsFor('ts') includes builtInTsCompletion as a third autocomplete source and extensionsFor('js') does not; the source is imported from the phase-2 deliverable, not redefined or stubbed locally.",
+          "passCriteria": [
+            "CodeEditor.tsx imports builtInTsCompletion from the phase-2 module; no local redefinition or test stub of it in the wiring.",
+            "extensionsFor returns a javascriptLanguage.data.of({ autocomplete: builtInTsCompletion }) entry when lang === 'ts'.",
+            "The builtin entry is absent from the extension list when lang === 'js' (the JS-mode list is byte-identical to the pre-phase list).",
+            "An EditorState built with extensionsFor('ts') exposes three autocomplete facet sources; extensionsFor('js') exposes exactly the original two."
+          ],
+          "failureExamples": [
+            "builtInTsCompletion wired unconditionally, so JS mode also surfaces built-in type completions.",
+            "The entry is dropped from extensionsFor and added as a side-effect elsewhere, so a lang-switch reconfigure loses it.",
+            "builtInTsCompletion is a locally defined empty/static stub rather than the real phase-2 source."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "existing-sources-preserved",
+          "label": "Existing two-source pattern untouched",
+          "ruleStatement": "The scope and sandbox service completions remain their own two separate javascriptLanguage.data.of(...) entries, and the new source is a third distinct .of() entry — never folded into an array, which CodeMirror would misread as a static completion list.",
+          "passCriteria": [
+            "scopeCompletionSource(globalThis) and sandboxServiceCompletions are still each their own javascriptLanguage.data.of({ autocomplete: ... }) entry, unchanged.",
+            "The builtin source is added as a separate .of() call, not as an array item; no javascriptLanguage.data.of([...]) array form appears anywhere in the wiring.",
+            "autocompletion() remains in the extension list so the facet entries are actually queried."
+          ],
+          "failureExamples": [
+            "The three sources merged into a single javascriptLanguage.data.of([...]) — CodeMirror renders it as a static completion list and member/constructor completions stop working.",
+            "An existing source was replaced or reordered to make room, so scope or service completions regress."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "sandbox-precedence-preserved",
+          "label": "Sandbox service completions still win over generic members",
+          "ruleStatement": "Typing redis. in a TS doc still surfaces the redis service's public members ahead of any generic built-in members; the builtin entry is ordered after the sandboxServiceCompletions entry so earlier sources keep rank.",
+          "passCriteria": [
+            "In the array returned by extensionsFor('ts'), the builtin entry is positioned after the sandboxServiceCompletions entry.",
+            "An autocomplete run at `redis.` in a TS document lists service members such as set/get with their live parameter lists, with no generic Object/ReadableStream members outranking them."
+          ],
+          "failureExamples": [
+            "The builtin entry is placed before sandboxServiceCompletions, so generic built-in members outrank redis members.",
+            "Typing redis. now surfaces a generic member list (e.g. toString/constructor) instead of the sandbox service's methods."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "reconfigure-repeatable",
+          "label": "Reconfiguration is repeatable — no facet accumulation",
+          "ruleStatement": "extensionsFor is a pure function of lang: reconfiguring ts→js→ts yields the same autocomplete facet set as a fresh mount, with exactly one builtin source and no duplication or leakage across calls.",
+          "passCriteria": [
+            "extensionsFor builds its extension list inline (or from an immutable structure) and never mutates a module-level array, so repeated calls cannot accumulate entries.",
+            "A test reconfiguring a view ts→js→ts (via StateEffect.reconfigure.of(extensionsFor(lang))) shows exactly one builtInTsCompletion source after the round-trip, matching a fresh mount.",
+            "Calling extensionsFor('ts') twice returns independent arrays, not a shared mutable reference."
+          ],
+          "failureExamples": [
+            "A module-level sources array is pushed onto inside extensionsFor, so each JS↔TS switch duplicates the builtin source and the picker shows duplicate completions.",
+            "After ts→js→ts the builtin entry is missing because it was gated by a stale closure/language variable rather than the lang argument."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "no-store-gating-added",
+          "label": "No readiness gating on the builtin source",
+          "ruleStatement": "The builtin source's presence does not depend on tsStatus; the phase adds no store-based readiness gating, so the cold-start/offline window is handled solely by the source's own window.ts guard and the single lang-change reconfigure path still mounts it.",
+          "passCriteria": [
+            "extensionsFor reads only its lang argument (plus existing editor imports); it does not read tsStatus or useAppStore.",
+            "The only conditional that includes/excludes the builtin entry is lang === 'ts'; wiring is identical for tsStatus of 'loading', 'ready', and 'fallback'.",
+            "No new useEffect/subscription was added keyed on tsStatus to inject or remove the source."
+          ],
+          "failureExamples": [
+            "The entry is gated on tsStatus === 'ready', so on cold start the source is never mounted and (since reconfigure only fires on lang change) builtin completions silently never appear for that session.",
+            "An extra tsStatus-keyed effect adds the facet after load, racing the lang reconfigure and leaving duplicates or a missing source."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "gates-green",
+          "label": "Build, lint, and test stay green",
+          "ruleStatement": "npm run build, npm run lint, and npm run test all exit 0 on the phase's deliverable; no new lint errors and no regressions in the existing suite.",
+          "passCriteria": [
+            "npm run build exits 0 (tsc -b and vite build both succeed).",
+            "npm run lint exits 0 with no new violations in src/components/CodeEditor.tsx or the phase-2 source.",
+            "npm run test exits 0 — the full vitest suite passes, including any existing autocomplete/sandbox tests."
+          ],
+          "failureExamples": [
+            "tsc errors on importing builtInTsCompletion (wrong export name or missing module).",
+            "eslint flags an unused import or a react-hooks violation introduced by the wiring.",
+            "An existing test asserting the two-source facet set breaks because the wiring changed it."
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "Most likely fail: the source lands as an array item inside an existing .of() (CodeMirror reads it as a static list) or outside the lang conditional so JS mode gets it — fastest fix is to add a distinct javascriptLanguage.data.of({ autocomplete: builtInTsCompletion }) placed after the sandboxServiceCompletions entry and gated to lang === 'ts', then re-run npm run build && npm run lint && npm run test."
+    }
+  ],
+  "successCriteria": [
+    "In TS-mode CodeEditor: (1) typing `new ReadableStream()` (and representative built-ins Promise, Map, Set, Array, Date, JSON, Math, console) shows a completion whose detail/apply text spells out the constructor's parameters — names, types, and arity; (2) after `const reader: ReadableStream = new ReadableStream();`, typing `reader.` lists ReadableStream's public members (e.g. getReader, cancel, pipeTo) filtered to member context, not global scope; (3) existing service-handle completions (`redis.` etc. from serviceCompletions) and global-name completions still work and win over generic member completions where they overlap; (4) offline/CDN-unavailable fallback behaves exactly like tsLint — degrades to the current scope+service sources rather than hanging; (5) `npm run build`, `npm run lint`, and `npm run test` all stay green with new tests covering the two cases.",
+    "tscheck-completion-entrypoint: Exported getCompletions(code, pos, ts) in tsCheck.ts returning completion entries (name, kind, sortText) with getCompletionEntryDetails-backed detail, plus a unit test (stubbed fetch, local ts) proving that for `const reader: ReadableStream = new ReadableStream();` the position after `reader.` yields ReadableStream's public members (getReader, cancel, pipeTo) rather than global scope.",
+    "tscheck-constructor-signature-completion: A constructor-signature completion path in tsCheck.ts that, given code ending in `new ReadableStream(` (and representative built-ins Promise, Map, Set, Array, Date, JSON, Math, console), returns a completion entry whose detail spells out the constructor's parameter names, types, and count, plus a unit test asserting that rendered signature.",
+    "builtin-ts-completion-source: The async builtInTsCompletion CompletionSource module with unit tests (fake CompletionContext) covering: (a) `reader.` on a typed ReadableStream lists its public members; (b) `new ReadableStream(` yields the constructor signature detail; (c) it returns null for the 5 service handles so sandboxServiceCompletions wins; (d) it returns null when window.ts is absent or ensureLibs/getCompletions throws, degrading exactly like tsLint.",
+    "codeeditor-wire-builtin-completion: A third javascriptLanguage.data.of({ autocomplete: builtInTsCompletion }) facet entry in CodeEditor included only when lang === 'ts'; npm run build, npm run lint, and npm run test all stay green, and existing sandbox-service-handle completions (redis.) still win over generic member completions."
+  ],
+  "deferred": [
+    "Monaco editor migration or parity — the repo ships monaco too, but this task is CodeMirror-only built-in completion.",
+    "Full IDE IntelliSense (go-to-definition, hover, rename, separate signature-help popup) — only completion list + parameter detail/apply text is required.",
+    "Completion for user-defined types, imported modules, or cross-file symbols — scoped strictly to built-in JS/TS standard-library globals.",
+    "Adding service-handle completions or editing sandboxAmbient service declarations — those are owned by prior roadmap phases and only reused here as an existing pattern.",
+    "Changing the tsCheck/tsCompiler lib seed set — current es2021+dom is assumed sufficient for the requested built-ins.",
+    "Non-JS/TS completion (CSS/JSON/HTML) — the editor targets js/ts modes only.",
+    "Curated hand-written built-in type tables — contradicts the confirmed mechanism (LS inference from lib.d.ts), fails YAGNI gate 3 (speculative abstraction).",
+    "Local/offline lib bundle fallback — success criterion (4) only requires tsLint-style degradation to existing sources; fails YAGNI gate 2 (not needed now).",
+    "Pre-warm lib.d.ts at editor mount to cut cold-start latency — the source already degrades gracefully while libs load; fails YAGNI gate 2 (not needed now)."
+  ]
+}
