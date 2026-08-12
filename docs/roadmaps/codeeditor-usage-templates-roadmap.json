@@ -1,0 +1,671 @@
+{
+  "task": "I want to improve the codeeditor - the autocomplete is working, but it still not user friendly enough. For example: when TransformStream is selected from autocomplete, insert a usage template like TransformStream<number, number>({ transform(chunk, controller) { ... } }); similarly ReadableStream<number>({ start(controller) { ... } }). Not necessarily auto-insert — a template-of-usage popover dialog where the user selects among available templates is also acceptable.",
+  "analysis": {
+    "objective": "Add a generic, data-driven 'usage template' mechanism to the CodeMirror-based code editor so that accepting a built-in TS completion item that carries usage templates shows a popover picker the user can choose from (or decline to insert just the bare identifier), seeded with a small curated set (TransformStream, ReadableStream, and a few other web platform types).",
+    "successDefinition": "1) Mechanism is generic: a completion item can carry zero-or-more usage templates as data attached to the item, and adding a new type's templates requires a data-only change with no edits to the completion source or editor wiring. 2) On accept of an item that has templates, a popover appears listing them; selecting one inserts the full template text at the cursor indentation-aware, and declining/dismissing inserts only the bare identifier. Nothing auto-inserts. 3) Behavior is byte-identical to today when an item has no templates. 4) Curated data covers at least TransformStream and ReadableStream plus a small set (AbortController and other stream variants). 5) The inserted template is syntactically valid JS/TS and indentation-correct at non-zero indent. 6) New unit tests cover the mechanism (attach, popover trigger, choose, decline) and curated data; build (tsc -b) and lint introduce no new errors; existing editor completion tests stay green.",
+    "assumptions": [
+      "The target editor is CodeMirror 6 (confirmed: editorCompletions.ts composes @codemirror/autocomplete sources); the Monaco dependency in package.json is not the sandbox code editor's completion path.",
+      "CodeMirror 6 has no built-in 'popover on accept' primitive, so the template popover must be a hand-built editor overlay (ViewPlugin + DOM positioned from editor viewport coordinates) bridged to a React component; focus/dismiss (Escape, click-outside, blur) must be handled in that overlay.",
+      "Usage templates are static text curated by hand (concrete generics exactly as in the examples, e.g. TransformStream<number, number>), not generated or inferred by the LanguageService, and not dependent on the CDN window.ts runtime being available.",
+      "On accept, constructor entries already carry apply:'' (the identifier is already typed ahead of the open paren), so 'insert bare identifier' is the current accept behavior; template insertion must compute the correct replacement range including the trailing '(' and whitespace.",
+      "The editorCompletions.ts module must stay component-free (react-refresh convention, per the repo's own comments), so the React popover lives in a separate component driven through a non-component bridge (e.g. a command/dispatch), keeping the extension wiring unit-testable without a DOM.",
+      "A template referencing an undefined symbol (e.g. the ReadableStream example's 'nums') may surface tsLint errors after insertion; this is tolerated as illustrative and is not a gate."
+    ],
+    "risks": [
+      "Post-accept popover placement: CodeMirror 6 provides no popover-after-accept primitive, so the overlay must compute cursor pixel coordinates and manage focus; getting coordinate math or focus/dismiss wrong produces a mispositioned or focus-trapping popover.",
+      "Replacement-range correctness: constructor accepts already use apply:'' with the identifier left in the doc; naive template insertion could produce malformed output like 'TransformStream(TransformStream<number...' — the range must cover the identifier plus the trailing '('.",
+      "Indentation of multi-line templates at nested cursor positions: inserting a 7-line template at a deep indent without re-indenting its body breaks the relative indentation of the inserted code.",
+      "React/CodeMirror bridge: putting the popover inside editorCompletions.ts violates the repo's react-refresh component-free convention and breaks its DOM-free unit tests; the React component must be separated behind a bridge.",
+      "Regression on the common path: items without templates (the dominant case) must keep current accept behavior exactly; any change to the accept path risks breaking existing completion tests.",
+      "Templates that reference undefined locals (e.g. 'nums') trigger tsLint errors on insertion, which users may read as the feature being broken; must decide whether curated templates are self-contained or documented as illustrative."
+    ],
+    "outOfScope": [
+      "Auto-insertion of templates on accept — the user explicitly scoped the UX to a popover picker where the user chooses or declines.",
+      "Templates for arbitrary user-defined or future types beyond the curated set — the mechanism is built first; only the first curated set (streams + a few) ships, future types add data.",
+      "Full lib.dom.d.ts web-platform type coverage — only 'Streams + a few' types are curated, not all global types.",
+      "AI/ML-generated or LanguageService-inferred template suggestions — templates are hand-curated static data only.",
+      "User-authored / persisted custom templates (saving user templates to localStorage or disk) — not requested.",
+      "Changes to the tsCheck LanguageService entrypoint or signature-help behavior — the existing Phase 0-3 completion/signature pipeline stays as-is.",
+      "The 5 sandbox service handles (sandboxServiceCompletions) — they remain owned by the sync source and never receive usage templates.",
+      "Template behavior for JS (non-TS) mode — usage templates are TS-mode only, since the built-in-type completion source that would carry them is TS-only."
+    ],
+    "domainShape": "technical",
+    "domainShapeReason": "The objective is about editor machinery — completion item data, a popover picker UI, and template insertion inside a CodeMirror editor — with no business entities, rules, or domain workflows a domain expert would recognize.",
+    "ubiquitousLanguage": [
+      {
+        "term": "completion item",
+        "meaning": "a single suggestion in the editor's autocomplete list"
+      },
+      {
+        "term": "usage template",
+        "meaning": "static code snippet attached to a completion item showing how to construct/use the symbol"
+      },
+      {
+        "term": "template popover",
+        "meaning": "the in-editor overlay listing available usage templates on accept"
+      },
+      {
+        "term": "accept",
+        "meaning": "the editor action confirming a highlighted completion item"
+      },
+      {
+        "term": "bare identifier",
+        "meaning": "the plain symbol name inserted when the user declines templates"
+      },
+      {
+        "term": "curated template set",
+        "meaning": "the hand-written first collection of templates (streams + a few)"
+      },
+      {
+        "term": "completion source",
+        "meaning": "a CodeMirror autocomplete source that produces completion items"
+      }
+    ]
+  },
+  "discoveryFindings": [
+    {
+      "area": "Completion accept wiring",
+      "finding": "src/infrastructure/editorCompletions.ts composes three javascriptLanguage.data.of({ autocomplete }) facet entries: scopeCompletionSource(globalThis), sandboxServiceCompletions, and (TS only) builtInTsCompletion. toCompletion(entry) sets `apply: ''` whenever entry.detail?.startsWith('new '). @codemirror/autocomplete is 6.20.3. Completion.apply type is `string | ((view, completion, from, to) => void)` — the function form is the built-in hook for custom accept behavior; its docs require adding the `pickedCompletion` annotation if dispatching a transaction.",
+      "filePath": "src/infrastructure/builtInTsCompletion.ts",
+      "implication": "Use the function-form `apply` on curated items as the popover trigger. Non-curated items keep the existing apply (string/'' default), so the no-template path stays byte-identical."
+    },
+    {
+      "area": "Two distinct accept paths for the same type name",
+      "finding": "A curated type like ReadableStream can be accepted from (a) bare-identifier context via getCompletionsAtPosition with apply defaulting to replacing the typed partial with the label; (b) constructor context `new ReadableStream(` short-circuits to constructorSignatureEntries whose apply is '' and passes from=to=context.pos (empty range).",
+      "filePath": "src/infrastructure/builtInTsCompletion.ts",
+      "implication": "'Decline -> bare identifier' must reproduce each path's current behavior separately. Template insertion needs a range the source does not provide in the constructor case: the apply function must itself compute the replacement span (walk back over `new Name(`)."
+    },
+    {
+      "area": "In-editor overlay/tooltip infrastructure",
+      "finding": "NO existing ViewPlugin/hoverTooltip/showTooltip/tooltip/popover usage anywhere in src/. @codemirror/view 6.43.8 exports showTooltip, Tooltip, TooltipView, ViewPlugin, repositionTooltips.",
+      "filePath": "src/components/CodeEditor.tsx",
+      "implication": "The popover must be built from scratch on @codemirror/view (showTooltip + custom TooltipView hosting the React root, or a ViewPlugin-managed overlay). Plan must include cursor-coordinate computation, focus management, and Escape/click-outside/blur dismissal."
+    },
+    {
+      "area": "React-refresh / component-free convention",
+      "finding": "editorCompletions.ts header: wiring is a pure function of the language mode so CodeEditor.tsx stays component-only and the wiring is unit-testable without a DOM. eslint uses reactRefresh.configs.vite (only-export-components rule): .tsx files may only export components, .ts files must not export JSX.",
+      "filePath": "src/infrastructure/editorCompletions.ts",
+      "implication": "The React popover component must live in a separate .tsx file under src/components/, while apply/extension/range logic stays in .ts files under src/infrastructure/. A non-component bridge (pure functions / zustand store / event) must carry popover state from .ts to .tsx."
+    },
+    {
+      "area": "Built-in type completion data source & per-item metadata",
+      "finding": "Built-in TS completions are generated by the TypeScript LanguageService (tsCheck.getCompletions -> getCompletionsAtPosition + getCompletionEntryDetails), resolving against lib.es2021 + lib.dom + sandboxAmbient. TsCompletionEntry = { name, kind, kindModifiers, sortText, detail? }. The CodeMirror Completion interface has NO free-form data field and is subject to TS excess-property checking on literals.",
+      "filePath": "src/infrastructure/tsCheck.ts",
+      "implication": "Attach templates by a curated side-map keyed on entry.name (label), consumed in toCompletion/apply — not by extending the Completion object. Keeps the mechanism generic: adding types is data-only."
+    },
+    {
+      "area": "Test framework & DOM-less environment",
+      "finding": "Vitest ^4.1.10; no test environment configured (Node, no jsdom/happy-dom). Completion tests synthesize the environment (globalThis.window = { ts }, stubbed fetch serving lib.d.ts from node_modules). No e2e/playwright harness.",
+      "filePath": "src/infrastructure/builtInTsCompletion.test.ts",
+      "implication": "Popover DOM cannot be unit-tested in the current environment. Split the mechanism into pure Node-testable logic plus a thin DOM shell; do not promise DOM-level popover tests without adding jsdom/happy-dom."
+    },
+    {
+      "area": "Package.json / tsconfig / build-lint-test",
+      "finding": "@codemirror/autocomplete ^6.20.3, view ^6.43.8, state ^6.7.1, language ^6.12.4, lint ^6.9.7, commands ^6.10.4, lang-javascript ^6.2.5. TS devDep ~6.0.2 (installed 6.0.3) but runtime LS compiler is 5.4.5 from CDN. Build = tsc -b && vite build; lint = eslint .; test = vitest run. tsconfig.app.json strict, noUnusedLocals, noUnusedParameters, jsx react-jsx.",
+      "filePath": "package.json",
+      "implication": "New code must survive tsc -b strict + eslint react-refresh. Tests must tolerate devDep 6.0.3 vs runtime 5.4.5 drift."
+    },
+    {
+      "area": "Curated-data / templates patterns",
+      "finding": "No usage-template data exists. Closest patterns: serviceCompletions.ts SERVICE_INTERNAL_METHODS (Record<string, readonly string[]> keyed by handle); sandboxAmbient.ts DOM_AUGMENT_TEXT (hand-curated DOM type patches).",
+      "filePath": "src/infrastructure/serviceCompletions.ts",
+      "implication": "Create a data module adjacent to builtInTsCompletion.ts (e.g. src/infrastructure/typeUsageTemplates.ts) exporting `Record<string, UsageTemplate[]>` keyed by type label, mirroring SERVICE_INTERNAL_METHODS. sandboxAmbient DOM_AUGMENT_TEXT is precedent for authoritative stream shapes."
+    },
+    {
+      "area": "Available autocomplete snippet primitives",
+      "finding": "@codemirror/autocomplete exports `snippetCompletion(template, completion)` building an apply with ${}-field navigation (snippetKeymap: Tab/Shift-Tab/Escape). No snippet keymap wired into CodeEditor.tsx (spreads completionKeymap/defaultKeymap/closeBracketsKeymap/historyKeymap only).",
+      "filePath": "src/components/CodeEditor.tsx",
+      "implication": "For static, field-less usage templates the plain function-form apply is the more direct fit than snippetCompletion; snippetCompletion + snippetKeymap is available later if templates gain tab-stop fields."
+    }
+  ],
+  "requiredMaterials": [],
+  "phases": [
+    {
+      "id": "usage-template-data",
+      "order": 0,
+      "name": "Curated usage-template data module (typeUsageTemplates)",
+      "goal": "Introduce the data-driven foundation of the usage-template mechanism: a UsageTemplate type and a curated USAGE_TEMPLATES: Record<string, UsageTemplate[]> keyed by completion label, covering TransformStream, ReadableStream, WritableStream, and AbortController, mirroring the existing SERVICE_INTERNAL_METHODS curated-record convention so that adding a future type's templates is a data-only change with zero edits to the completion source or editor wiring.",
+      "boundedContext": "curated template data (editor completion mechanism)",
+      "layer": "infrastructure",
+      "blastRadius": "small",
+      "inputs": "serviceCompletions.ts SERVICE_INTERNAL_METHODS curated-record convention; sandboxAmbient.ts DOM_AUGMENT_TEXT as precedent for hand-curated DOM type shapes; user's template examples TransformStream<number, number>({ ... }) and ReadableStream<number>({ ... })",
+      "expectedResult": "New src/infrastructure/typeUsageTemplates.ts exporting `UsageTemplate { label: string; text: string }` and a non-empty USAGE_TEMPLATES record for the curated types (TransformStream, ReadableStream, WritableStream, AbortController), plus a Node unit test asserting every entry has a non-empty label, non-empty text, and a non-empty template body.",
+      "dependsOn": [],
+      "rubric": [
+        {
+          "id": "type-and-record-shape",
+          "label": "UsageTemplate type and record structure",
+          "ruleStatement": "The module exports a `UsageTemplate` type and a `USAGE_TEMPLATES` record typed `Record<string, UsageTemplate[]>`, mirroring the SERVICE_INTERNAL_METHODS curated-record convention so every future type addition is a data-only edit.",
+          "passCriteria": [
+            "`UsageTemplate` is an exported type with exactly the fields `label: string` and `text: string`.",
+            "`USAGE_TEMPLATES` is exported from `src/infrastructure/typeUsageTemplates.ts` and declared with the type annotation `Record<string, UsageTemplate[]>`.",
+            "The record values are arrays of template objects, not a flat `Record<string, string>` of raw snippets."
+          ],
+          "failureExamples": [
+            "`UsageTemplate` lacks the `label` field or adds required fields beyond `text`.",
+            "`USAGE_TEMPLATES` is typed `Record<string, string>` with snippets as bare strings.",
+            "The module is not exported, or lives outside `src/infrastructure/typeUsageTemplates.ts`."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "curated-coverage",
+          "label": "Curated set complete and keyed by completion label",
+          "ruleStatement": "The record contains a non-empty entry for every curated type — TransformStream, ReadableStream, WritableStream, AbortController — keyed exactly by the completion label (the bare symbol name) so the picker can look templates up by the accepted item's label.",
+          "passCriteria": [
+            "Record keys include exactly `TransformStream`, `ReadableStream`, `WritableStream`, `AbortController`.",
+            "Each of those four keys maps to a non-empty array of templates.",
+            "The record is non-empty (at least 4 entries)."
+          ],
+          "failureExamples": [
+            "AbortController is missing (only 3 types covered).",
+            "A key is misspelled or lowercased (e.g. `readablestream`), so a label lookup would miss.",
+            "A curated key maps to an empty array `[]`."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "template-text-validity",
+          "label": "Template text is a real, non-empty construction snippet",
+          "ruleStatement": "Every template `text` is a non-empty, realistic code snippet for constructing/using its symbol (consistent with the user's `TransformStream<number, number>({ ... })` and `ReadableStream<number>({ ... })` examples), carrying a template body beyond the bare identifier.",
+          "passCriteria": [
+            "Every `text` is non-empty after trimming.",
+            "No `text` equals just the bare symbol identifier — each contains a body (constructor call, method chain, or block).",
+            "Stream templates follow the curated construction style, e.g. `new TransformStream<number, number>({ ... })`."
+          ],
+          "failureExamples": [
+            "`text` is the bare identifier `\"TransformStream\"` with no body.",
+            "Whitespace-only or empty text.",
+            "A placeholder like `\"TODO\"` or a stub `\"...\"`."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "test-guards-invariants",
+          "label": "Node unit test asserts every-entry invariants",
+          "ruleStatement": "A Node unit test iterates every entry of USAGE_TEMPLATES and asserts each has a non-empty label, a non-empty text, and a non-empty template body, and passes deterministically.",
+          "passCriteria": [
+            "The test file exists in the expected Node test location.",
+            "The test loops over ALL entries of USAGE_TEMPLATES, not a hardcoded one or two types.",
+            "Assertions cover non-empty label, non-empty text, and non-empty template body.",
+            "The repo test runner passes on repeated runs."
+          ],
+          "failureExamples": [
+            "The test only checks TransformStream, leaving the rest unguarded.",
+            "No assertion on the `label` or `text` fields.",
+            "The test fails to compile or fails when run."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "data-only-footprint",
+          "label": "Data-only footprint — no edits outside the data module and its test",
+          "ruleStatement": "This phase adds the curated data module and its test only; it leaves the completion source (`serviceCompletions.ts`) and editor wiring untouched so the change is scope-bounded and trivially revertible (rollback-safe).",
+          "passCriteria": [
+            "`git status`/`git diff` shows only `src/infrastructure/typeUsageTemplates.ts` and its unit test added or modified.",
+            "No edits to `serviceCompletions.ts` or any editor/UI wiring files.",
+            "`USAGE_TEMPLATES` is not imported or consumed by the completion source in this phase."
+          ],
+          "failureExamples": [
+            "The template popover picker was wired into the editor as part of this phase (out of scope — a later phase).",
+            "`serviceCompletions.ts` was modified to read `USAGE_TEMPLATES`.",
+            "Unrelated files were changed in the same diff."
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is an incomplete curated set or placeholder template text — diff the record keys against the four required types and make each `text` a real constructor-call snippet in the same style as `TransformStream<number, number>({ ... })`, keeping the diff confined to the data module and its test."
+    },
+    {
+      "id": "usage-template-insert-logic",
+      "order": 1,
+      "name": "Pure usage-template lookup, replacement-range, and insert logic",
+      "goal": "Build the pure, Node-testable core of the mechanism: resolve usage templates for a completion label, compute the exact replacement range for both accept paths (bare-identifier partial-replacement, and constructor `new Name(` walk-back where apply from==to==pos), produce the bare-identifier insert that reproduces each path's current behavior, and re-indent multi-line template bodies to the cursor line's indent so templates are indentation-correct at nested cursor positions.",
+      "boundedContext": "editor completion mechanism (usage-template attach/insert engine)",
+      "layer": "infrastructure",
+      "blastRadius": "small",
+      "inputs": "typeUsageTemplates.ts data shape (phase usage-template-data); discovery finding on the two accept paths and apply from/to semantics (from==to==pos in the constructor case, so the replacement span must be computed, not trusted from the source)",
+      "expectedResult": "New src/infrastructure/usageTemplateInsert.ts with zero-DOM pure functions (template lookup by label, decline/bare-insert per accept path, template-insert text + replacement range, template-body re-indent), covered by Node unit tests: constructor `new TransformStream(` walk-back, bare-identifier partial replacement, and multi-line body at a nested indent.",
+      "dependsOn": [
+        "usage-template-data"
+      ],
+      "rubric": [
+        {
+          "id": "label-lookup-resolution",
+          "label": "Usage-template lookup by completion label",
+          "ruleStatement": "Given a completion label, the module resolves the usage templates attached to that label from the phase's data input, and returns an empty result for labels with none — without throwing and without touching any editor state.",
+          "passCriteria": [
+            "lookup('TransformStream') returns the curated template(s) for that label from the typeUsageTemplates data shape input",
+            "a label that exists in data but has no attached templates returns an empty list (never undefined and never throws)",
+            "an unknown label (e.g. 'DoesNotExist') returns an empty list and does not throw",
+            "repeated lookups of the same label return identical results (deterministic, no state mutation)"
+          ],
+          "failureExamples": [
+            "throws or returns undefined for an unknown or template-less label",
+            "returns a template belonging to a different label",
+            "mutates or sorts the caller's template data as a side effect"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "bare-identifier-insert-parity",
+          "label": "Bare-identifier insert reproduces both accept paths' current behavior",
+          "ruleStatement": "Declining templates produces a bare-identifier insertion whose inserted text and replacement range exactly reproduce the pre-phase behavior on BOTH accept paths (partial-replacement and constructor walk-back), with zero template text leaking in.",
+          "passCriteria": [
+            "on the bare-identifier partial-replacement path, insert text is exactly the symbol name and the replacement range spans only the partial identifier typed so far",
+            "on the constructor path, insert text is exactly the symbol name and the replacement range covers only the partially-typed identifier (computed from < to), leaving the `new ` prefix and following context intact",
+            "a unit test asserts the resulting document text matches expected behavior (e.g. `new Trans` -> `new TransformStream`) with no stray or duplicated characters",
+            "the bare-insert result contains no snippet/template body text"
+          ],
+          "failureExamples": [
+            "declining a template still inserts `new Name(` or template body text",
+            "duplicates the `new ` prefix",
+            "produces a replacement range where from > to or from == to",
+            "swallows adjacent non-identifier characters in the document"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "constructor-walkback-range",
+          "label": "Constructor replacement span is computed, not trusted from the source",
+          "ruleStatement": "For the constructor accept path where apply from==to==pos, the replacement span is computed by walking back over the identifier from the cursor, never trusted from the (degenerate) source range.",
+          "passCriteria": [
+            "given source ending in `new Trans` with cursor at end, the computed from-to span covers exactly `Trans`",
+            "walk-back stops at the identifier/word boundary and does not swallow the `new ` keyword",
+            "the walk-back is a pure function of (source, pos) — no editor or CodeMirror types in its signature",
+            "inserting `new TransformStream(` via this span yields exactly one `new ` prefix, no duplication",
+            "a Node unit test covers the constructor walk-back scenario and asserts exact expected text"
+          ],
+          "failureExamples": [
+            "returns from == pos (no walk-back), yielding `new new TransformStream(` on accept",
+            "walk-back swallows the `new ` keyword into the span",
+            "off-by-one leaves or drops a trailing character of the typed identifier",
+            "fails on an uppercase-first identifier or when the identifier is already complete"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "template-body-reindent",
+          "label": "Multi-line template bodies re-indent to cursor-line indent",
+          "ruleStatement": "Multi-line template bodies are re-indented so that every line aligns with the cursor line's indent while preserving each line's original relative indentation, as a pure function of (body, cursorIndent).",
+          "passCriteria": [
+            "inserting a template at a nested cursor (e.g. inside a 4-space-indented block) yields body lines each prefixed with that indent, preserving relative offsets between lines",
+            "the first line keeps its content intact; no spurious indentation is added when the cursor indent is 0 (top level)",
+            "a Node unit test covers a multi-line body at a nested indent and asserts the exact expected output text",
+            "re-indent never mixes tabs and spaces and never introduces trailing whitespace"
+          ],
+          "failureExamples": [
+            "all lines collapse to the first line's indent, losing the body's relative structure",
+            "only the first line is re-indented while continuation lines stay put",
+            "a top-level (indent 0) insert gains stray leading whitespace",
+            "re-indent depends on editor/DOM state instead of the (body, cursorIndent) inputs"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "node-testable-purity",
+          "label": "Zero-DOM pure module covered by Node unit tests",
+          "ruleStatement": "The module is a zero-DOM, pure-function module that runs under plain Node with no editor host, is repeatable and side-effect-free, and has Node unit tests covering the three named scenarios.",
+          "passCriteria": [
+            "src/infrastructure/usageTemplateInsert.ts imports no CodeMirror/@codemirror/* or DOM (no document/window) symbols",
+            "all exported functions take plain data (strings, numbers, plain objects) and are repeatable: calling any function twice with the same input yields identical results with no observable side effects on caller objects or module state",
+            "a Node unit test file exists and passes via the standard test runner with no jsdom or mocked DOM",
+            "tests cover all three named scenarios: constructor walk-back, bare-identifier partial replacement, and multi-line body at a nested indent"
+          ],
+          "failureExamples": [
+            "module imports EditorView or references document/window",
+            "a function mutates a caller-provided object or caches results across calls in a way that changes output",
+            "the test file requires jsdom/a DOM host to run",
+            "one of the three named scenarios has no test"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The constructor accept path is where this phase usually dies — an executor that trusts from==to==pos and skips the walk-back yields `new new TransformStream(` — so make the walk-back its own pure (source, pos) function, assert computed from < pos, and write the `new ` prefix-preservation test first before touching any other path."
+    },
+    {
+      "id": "usage-template-popover-bridge",
+      "order": 2,
+      "name": "Popover state bridge between completion logic and React UI",
+      "goal": "Provide the non-component state carrier that lets the .ts completion apply hook open a template popover and the .tsx React component render/close it, keeping the extension wiring component-free (the repo's react-refresh convention documented in editorCompletions.ts) and Node-unit-testable without a DOM.",
+      "boundedContext": "popover state bridge (editor completion mechanism <-> editor UI)",
+      "layer": "application",
+      "blastRadius": "small",
+      "inputs": "UsageTemplate type from usage-template-data; the only-export-components react-refresh convention enforced by eslint and the component-free wiring pattern in editorCompletions.ts",
+      "expectedResult": "New src/infrastructure/popoverBridge.ts (plain module/zustand store, no React imports) exposing open/close/update for a template popover carrying the templates list plus an anchor/range captured at accept time, with a subscribe API, plus Node unit tests covering open/close/update/clear lifecycle; eslint react-refresh passes.",
+      "dependsOn": [
+        "usage-template-data"
+      ],
+      "rubric": [
+        {
+          "id": "component-free-wiring",
+          "label": "Component-free bridge module",
+          "ruleStatement": "The bridge must be a plain module (zustand store) with no React imports, no JSX, and no hooks, and it must not break the repo's only-export-components react-refresh convention — eslint react-refresh must pass on it as-is.",
+          "passCriteria": [
+            "src/infrastructure/popoverBridge.ts is a .ts file (not .tsx) with no `import ... from 'react'` and no JSX anywhere in it.",
+            "No React hooks (useState/useEffect/useRef/useSyncExternalStore) appear in the file.",
+            "Running eslint react-refresh against the file reports zero errors for the module.",
+            "A .tsx component can import the store without the only-export-components rule firing."
+          ],
+          "failureExamples": [
+            "popoverBridge.ts is a .tsx file or contains `import { useState } from 'react'`.",
+            "The bridge is written as a custom hook (e.g., useTemplatePopover) that exports non-component values.",
+            "eslint react-refresh fails with 'fast refresh only works when a file only exports components'."
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "lifecycle-state-machine",
+          "label": "Open/close/update/clear lifecycle",
+          "ruleStatement": "The store must expose open, close, update, and clear actions whose transitions are idempotent and repeatable, always terminating in a known pristine state, with Node unit tests covering every transition including double-calls (repeatability and rollback safety).",
+          "passCriteria": [
+            "open(payload) transitions to an open state carrying the payload; calling it twice yields the same state with no error.",
+            "close() and clear() both restore the documented default (pristine) state; calling close() twice is safe and does not throw.",
+            "update() modifies only the intended field and does not reopen a closed popover.",
+            "Unit tests exercise open, close, update, and clear, including repeated open/close cycles that always end pristine with no accumulated anchor/template residue."
+          ],
+          "failureExamples": [
+            "close() leaves stale template/anchor data readable afterward.",
+            "Double-close or double-open throws or mutates state unexpectedly.",
+            "Tests cover only the happy-path open→read and skip close, update, or clear entirely."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "accept-anchor-payload",
+          "label": "Anchor and templates carried at accept time",
+          "ruleStatement": "The open action must carry BOTH the curated templates list and the anchor/range captured at accept time as distinct fields, and update() must preserve the anchor until the popover closes, because the .tsx component needs it to position the overlay.",
+          "passCriteria": [
+            "The open action accepts a payload with distinct templates and anchor/range fields.",
+            "The store's public state type exposes separate properties for the templates list and the anchor/range.",
+            "A unit test asserts the anchor value is unchanged after an update() call.",
+            "close/clear wipe the anchor so a later accept starts from a fresh anchor."
+          ],
+          "failureExamples": [
+            "Templates and anchor are merged into one field, or the anchor is derived from the templates list.",
+            "update() overwrites the anchor with the new templates' position.",
+            "open() drops or never stores the anchor, leaving the component unable to position the popover."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "subscribe-api",
+          "label": "Subscribe API for the React component",
+          "ruleStatement": "The bridge must expose a subscribe API usable from the .tsx component without importing React, returning an unsubscribe that stops notifications, with all of it verifiable in a Node test with no DOM.",
+          "passCriteria": [
+            "subscribe(cb) returns an unsubscribe function.",
+            "A subscriber callback fires on open, update, and close/clear state changes.",
+            "After calling the returned unsubscribe, further mutations do not invoke that callback (no listener leak).",
+            "The lifecycle tests run in the Node test runner with no window/document usage and pass without jsdom."
+          ],
+          "failureExamples": [
+            "subscribe returns void or throws without returning an unsubscribe.",
+            "Listeners keep firing after unsubscribe, leaking callbacks.",
+            "The implementation reads window/document, so tests require a DOM or jsdom to pass."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "usage-template-type-contract",
+          "label": "Typed against UsageTemplate data",
+          "ruleStatement": "The templates carried by the bridge must be typed with the UsageTemplate type imported from usage-template-data — no any/unknown in the payload — so the curated set flows from the data module through the bridge without casts or silent type drift.",
+          "passCriteria": [
+            "popoverBridge.ts imports UsageTemplate from the usage-template-data module's public entry.",
+            "The templates field is declared as UsageTemplate[] (or readonly) — not any or unknown.",
+            "tsc compiles the module and its tests cleanly.",
+            "A unit test constructs a real UsageTemplate value, passes it through open→update, and asserts it is returned unchanged."
+          ],
+          "failureExamples": [
+            "Templates typed as `any[]`, `unknown[]`, or a locally duplicated struct instead of the shared UsageTemplate.",
+            "The type is imported from a private/deep file whose export is unstable.",
+            "Tests cast the payload to silence a type error rather than using a genuine UsageTemplate value."
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "Most likely the bridge gets written as a React hook or imports React/JSX and trips the react-refresh only-export-components rule — fix by stripping all React imports and hooks into a plain store that exports only open/close/update/clear and subscribe, then re-run the eslint react-refresh gate."
+    },
+    {
+      "id": "usage-template-accept-wiring",
+      "order": 3,
+      "name": "Wire usage-template accept behavior into builtInTsCompletion",
+      "goal": "Assign the function-form apply to curated completion items so that accepting a template-bearing item opens the template popover via the bridge without inserting anything, while items with no templates keep today's byte-identical accept behavior (apply:'' for constructor entries, label-replacement for bare identifiers), keeping existing completion tests green.",
+      "boundedContext": "built-in TS completion source (builtInTsCompletion.ts)",
+      "layer": "infrastructure",
+      "blastRadius": "medium",
+      "inputs": "usageTemplateInsert lookup/decision functions (phase usage-template-insert-logic); popoverBridge open API (phase usage-template-popover-bridge); current toCompletion/apply semantics and test pins in builtInTsCompletion.ts and builtInTsCompletion.test.ts",
+      "expectedResult": "builtInTsCompletion.ts modified so curated labels get a function-form apply that resolves templates and calls bridge.open with no doc mutation; extended unit tests prove curated items trigger the bridge and non-curated items (the dominant case) keep current behavior; existing builtInTsCompletion.test.ts stays green.",
+      "dependsOn": [
+        "usage-template-insert-logic",
+        "usage-template-popover-bridge"
+      ],
+      "compensation": "Restore the previous toCompletion (non-function apply, '' for constructor entries) in builtInTsCompletion.ts; the curated side-map and bridge go unused and accept behavior reverts to the pre-phase state — existing tests already pin the old apply values, so this is a clean revert.",
+      "rubric": [
+        {
+          "id": "curated-function-form-apply",
+          "label": "Curated items switch to function-form apply",
+          "ruleStatement": "Every curated completion item must carry a function-form apply that is assigned by resolving the curated label set through the insert-logic — never by hand-wiring per-symbol branches that duplicate the decision.",
+          "passCriteria": [
+            "Curated labels are identified via the usageTemplateInsert lookup (the phase input), not a new hardcoded if/switch on symbol name inside builtInTsCompletion.ts",
+            "For each curated label, `apply` is a function (`typeof apply === 'function'`), never a string",
+            "The apply function delegates template resolution to the usageTemplateInsert lookup/decision functions; it does not re-implement the decision"
+          ],
+          "failureExamples": [
+            "apply stays a plain string for curated items, so the popover can never open",
+            "apply is a function but gated behind a bespoke per-symbol branch that duplicates the insert-logic decision",
+            "A curated item is missing apply entirely, so CodeMirror falls back to plain label insertion"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "accept-no-doc-mutation",
+          "label": "Accepting a curated item inserts nothing",
+          "ruleStatement": "Invoking the function-form apply for a curated item must open the popover and return without changing the editor document — no completion string CodeMirror could commit, no deferred insert, and no transaction dispatch.",
+          "passCriteria": [
+            "The apply function returns undefined/null so CodeMirror performs no insertion",
+            "Unit test invokes the apply with a fake state and asserts the document and selection are unchanged afterward",
+            "Test invokes apply twice and asserts still no doc mutation (repeatability of accept)"
+          ],
+          "failureExamples": [
+            "apply returns a string, so CodeMirror inserts the identifier before or alongside the popover",
+            "apply dispatches a transaction/mutation on the doc before calling bridge.open",
+            "Test only asserts bridge.open was called and never asserts doc state, leaving an insert undetected"
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "bridge-open-call",
+          "label": "Popover bridge is opened with the resolved templates",
+          "ruleStatement": "On accept of a curated item, popoverBridge.open is called exactly once with the template payload produced by the insert-logic — not with a hardcoded stub, a guessed list, or nothing.",
+          "passCriteria": [
+            "The apply resolves templates via usageTemplateInsert and passes that result (not a literal stub) to bridge.open",
+            "Unit test mocks the bridge and asserts open is called with the expected template list/decision payload for a curated symbol",
+            "Test asserts open is invoked exactly once per accept"
+          ],
+          "failureExamples": [
+            "bridge.open is never called, so no popover ever appears",
+            "bridge.open is called with a hardcoded dummy array that ignores the insert-logic result",
+            "bridge.open is invoked multiple times for a single accept"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "non-curated-bytes-identical",
+          "label": "Non-curated accept behavior is byte-identical to pre-phase",
+          "ruleStatement": "Items without curated templates must keep today's accept semantics exactly — apply:'' for constructor entries, label-replacement for bare identifiers — and existing builtInTsCompletion.test.ts pins must remain unmodified and green, so the phase changes nothing for the dominant non-curated case.",
+          "passCriteria": [
+            "Constructor entries still use string apply:''; bare identifiers still insert/replace with their label",
+            "No function-form apply is introduced on non-curated paths",
+            "The existing builtInTsCompletion.test.ts pins are not modified (diff shows only added tests), and the full suite passes unchanged"
+          ],
+          "failureExamples": [
+            "Constructor entries accidentally get a function-form apply, changing their accept",
+            "Bare-identifier replacement text no longer equals the label",
+            "A refactor of toCompletion rewrote the pinned apply strings, forcing edits to existing test expectations"
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "empty-template-fallback",
+          "label": "Curated label with no templates degrades to bare identifier",
+          "ruleStatement": "When the insert-logic resolves zero templates for a curated label, the apply must insert the bare identifier and must NOT open an empty popover — a dead accept or a blank overlay is a correctness failure.",
+          "passCriteria": [
+            "A curated label whose lookup returns an empty template list is covered by a unit test",
+            "That test asserts bridge.open is NOT called and the label is inserted/replaced (or the function-form apply returns the label string)",
+            "The fallback path is reachable without throwing"
+          ],
+          "failureExamples": [
+            "An empty template list still triggers bridge.open with an empty payload, rendering a blank popover",
+            "An empty template list makes the apply return undefined, so accepting inserts nothing at all (dead key)",
+            "The fallback throws when the lookup returns an empty array"
+          ],
+          "minScore": 7
+        }
+      ],
+      "healerHint": "The most likely failure is the curated apply returning the bare label (or undefined) instead of delegating to bridge.open — fix by having the curated branch resolve templates through usageTemplateInsert, call bridge.open with the result, return no value, and keep every non-curated apply string byte-for-byte so the existing suite stays green."
+    },
+    {
+      "id": "usage-template-popover-ui",
+      "order": 4,
+      "name": "Template popover overlay and React picker in CodeEditor",
+      "goal": "Render the template popover end-to-end: a CodeMirror overlay positioned from accepted-cursor viewport coordinates hosting a React picker listing the available usage templates, where choosing one inserts the template text via the pure insert logic (dispatching a transaction with the pickedCompletion annotation) and declining or dismissing (Escape/click-outside/blur) inserts only the bare identifier; items without templates never show the popover and nothing auto-inserts.",
+      "boundedContext": "editor UI integration (CodeMirror overlay + React picker)",
+      "layer": "interface",
+      "blastRadius": "medium",
+      "inputs": "popoverBridge subscription (phase usage-template-popover-bridge); usageTemplateInsert choose/decline functions (phase usage-template-insert-logic); CodeEditor.tsx keymap/mount structure; @codemirror/view 6.43.8 showTooltip/TooltipView/ViewPlugin primitives (no existing tooltip/popover infra in src/, so built from scratch)",
+      "expectedResult": "Accepting a template-bearing completion shows a positioned popover listing the templates; choose inserts the full template text (indentation-aware) and decline/dismiss inserts the bare identifier; the React picker lives in its own .tsx file under src/components/ (react-refresh compliant), CodeEditor.tsx mounts it and registers the overlay; build (tsc -b) and lint pass.",
+      "dependsOn": [
+        "usage-template-accept-wiring",
+        "usage-template-popover-bridge",
+        "usage-template-insert-logic"
+      ],
+      "compensation": "Remove the overlay registration and the React picker mount from CodeEditor.tsx; the bridge and pure insert logic remain in src but are unused, and to fully revert also drop the bridge.open call added in usage-template-accept-wiring — the editor then returns to the pre-popover accept behavior.",
+      "rubric": [
+        {
+          "id": "template-gating-no-auto-insert",
+          "label": "Popover gated to template-bearing items; nothing auto-inserts",
+          "ruleStatement": "The popover only ever appears for a completion item that actually carries usage templates, and accepting an item without templates inserts nothing beyond the standard accept — never template text, never a stray overlay.",
+          "passCriteria": [
+            "Accepting a completion item with zero usage templates does not render the overlay.",
+            "Accepting a template-less item inserts no extra text beyond the plain completion accept (no auto-inserted snippet).",
+            "Code inspection: the overlay / bridge.open call is guarded by a check that the accepted item's usageTemplates collection is non-empty.",
+            "A template-bearing item and a template-less item accepted at the same cursor position behave differently (overlay appears vs. does not appear)."
+          ],
+          "failureExamples": [
+            "Every accept shows the popover, including completions with no templates.",
+            "Accepting a plain identifier unexpectedly auto-inserts template body text.",
+            "The bridge.open call fires unconditionally on accept."
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "choose-inserts-full-template",
+          "label": "Choosing a template inserts the full template text, indentation-aware",
+          "ruleStatement": "Picking a template from the picker routes through usageTemplateInsert.choose and inserts the complete template source into the document at the accepted cursor, re-indented to the current line's indentation level, via a transaction carrying the pickedCompletion annotation.",
+          "passCriteria": [
+            "Choosing a template results in the document containing the full template text (every line, exact content), not a truncated or summarized version.",
+            "The inserted block is re-indented to match the indentation of the line where the completion was accepted.",
+            "Code inspection: the picker's choose handler calls usageTemplateInsert.choose, and the transaction is dispatched with the pickedCompletion annotation.",
+            "After the insert, the popover is dismissed and no further accept routing fires."
+          ],
+          "failureExamples": [
+            "Only a comment or the first line of the template is inserted.",
+            "The inserted text is pasted at column 0 regardless of the current indentation.",
+            "The picker bypasses the pure insert logic and hand-builds its own transaction without the pickedCompletion annotation."
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "decline-and-dismiss-insert-bare-identifier",
+          "label": "Decline and every dismiss path insert only the bare identifier",
+          "ruleStatement": "Declining (Escape) and dismissing the popover (click-outside, blur) each route through usageTemplateInsert.decline and leave the document containing exactly the bare identifier — template text must not appear through any dismissal path.",
+          "passCriteria": [
+            "Pressing Escape while the popover is open inserts exactly the bare identifier (the plain symbol name).",
+            "Clicking outside the popover inserts exactly the bare identifier.",
+            "Blurring the editor/document while the popover is open inserts exactly the bare identifier.",
+            "Code inspection: the picker's decline handler and the overlay's dismiss handling both call usageTemplateInsert.decline; no dismissal path triggers choose or auto-inserts template text."
+          ],
+          "failureExamples": [
+            "Escape closes the popover but inserts nothing, losing the identifier.",
+            "Click-outside inserts the template body instead of the bare identifier.",
+            "One dismissal path (e.g., blur) is unwired and leaves the popover stuck or the document empty."
+          ],
+          "minScore": 9
+        },
+        {
+          "id": "overlay-positioned-from-viewport-coords",
+          "label": "Overlay positioned from accepted-cursor viewport coordinates",
+          "ruleStatement": "The CodeMirror overlay is positioned from the accepted cursor's viewport coordinates delivered by the popoverBridge subscription — it anchors to those coordinates rather than to a hardcoded or arbitrary location.",
+          "passCriteria": [
+            "Code inspection: the overlay reads its anchor/position from the coordinates in the popoverBridge subscription payload.",
+            "The overlay appears near the accepted completion's location (anchored at/near the cursor) rather than at a fixed screen corner.",
+            "Accepting completions at different cursor positions moves the overlay accordingly."
+          ],
+          "failureExamples": [
+            "The overlay position is hardcoded (constant x/y) and ignores the bridge-supplied coordinates.",
+            "The overlay renders at a fixed screen corner or top-left regardless of the cursor.",
+            "The subscription payload coordinates are subscribed to but never read by the overlay."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "react-picker-file-structure",
+          "label": "React picker in its own react-refresh-safe .tsx; mounted by CodeEditor.tsx",
+          "ruleStatement": "The picker component lives in its own .tsx file under src/components/, is react-refresh compliant (not merged into CodeEditor.tsx in a way that breaks fast refresh), and CodeEditor.tsx mounts it and registers the overlay with the editor state.",
+          "passCriteria": [
+            "The picker is defined in its own .tsx file under src/components/ rather than inline in CodeEditor.tsx.",
+            "The new file's exports are react-refresh compatible (no module-level side effects co-located with the component export that force full reloads).",
+            "CodeEditor.tsx imports the picker and mounts it inside the overlay, and registers the overlay extension on the editor."
+          ],
+          "failureExamples": [
+            "The picker markup is inlined directly into CodeEditor.tsx.",
+            "The new .tsx file mixes a component export with module-level side effects, breaking react-refresh (full reload on every edit).",
+            "The overlay is never registered, so no overlay renders despite the picker existing."
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "build-green-and-revert-safety",
+          "label": "Build/lint green; compensation revert restores pre-popover behavior",
+          "ruleStatement": "With the phase wired in, tsc -b and lint pass; and the phase's stated compensation (removing the overlay registration and picker mount from CodeEditor.tsx) produces a still-clean build/lint and restores the pre-popover accept behavior — evidence the phase is reversible without leaving dangling references.",
+          "passCriteria": [
+            "tsc -b succeeds with the overlay and picker wired into CodeEditor.tsx.",
+            "The repo's lint command passes with no new errors from the new picker file or the CodeEditor.tsx changes.",
+            "In a scratch worktree, applying the compensation (removing the overlay registration and the picker mount from CodeEditor.tsx) yields a green build/lint with no dangling imports, and accepting a template-bearing completion inserts the bare identifier directly with no overlay."
+          ],
+          "failureExamples": [
+            "tsc -b or lint fails with the phase in place.",
+            "Reverting leaves an import of the removed picker or overlay, breaking the build.",
+            "After the revert the editor still registers or renders the overlay, so behavior does not return to pre-popover accept."
+          ],
+          "minScore": 8
+        }
+      ],
+      "healerHint": "The most likely failure is the overlay appearing at a hardcoded or zero position, or appearing for every completion, because the viewport anchor coordinates and the non-empty-templates gate are wired by assumption — fastest fix is to add a render-time guard asserting non-empty usageTemplates and finite coordinates, then trace the bridge.open call site so it fires only for template-bearing items."
+    }
+  ],
+  "successCriteria": [
+    "1) Mechanism is generic: a completion item can carry zero-or-more usage templates as data attached to the item, and adding a new type's templates requires a data-only change with no edits to the completion source or editor wiring. 2) On accept of an item that has templates, a popover appears listing them; selecting one inserts the full template text at the cursor indentation-aware, and declining/dismissing inserts only the bare identifier. Nothing auto-inserts. 3) Behavior is byte-identical to today when an item has no templates. 4) Curated data covers at least TransformStream and ReadableStream plus a small set (AbortController and other stream variants). 5) The inserted template is syntactically valid JS/TS and indentation-correct at non-zero indent. 6) New unit tests cover the mechanism (attach, popover trigger, choose, decline) and curated data; build (tsc -b) and lint introduce no new errors; existing editor completion tests stay green.",
+    "Curated usage-template data module (typeUsageTemplates): New src/infrastructure/typeUsageTemplates.ts exporting `UsageTemplate { label: string; text: string }` and a non-empty USAGE_TEMPLATES record for the curated types (TransformStream, ReadableStream, WritableStream, AbortController), plus a Node unit test asserting every entry has a non-empty label, non-empty text, and a non-empty template body.",
+    "Pure usage-template lookup, replacement-range, and insert logic: New src/infrastructure/usageTemplateInsert.ts with zero-DOM pure functions (template lookup by label, decline/bare-insert per accept path, template-insert text + replacement range, template-body re-indent), covered by Node unit tests: constructor `new TransformStream(` walk-back, bare-identifier partial replacement, and multi-line body at a nested indent.",
+    "Popover state bridge between completion logic and React UI: New src/infrastructure/popoverBridge.ts (plain module/zustand store, no React imports) exposing open/close/update for a template popover carrying the templates list plus an anchor/range captured at accept time, with a subscribe API, plus Node unit tests covering open/close/update/clear lifecycle; eslint react-refresh passes.",
+    "Wire usage-template accept behavior into builtInTsCompletion: builtInTsCompletion.ts modified so curated labels get a function-form apply that resolves templates and calls bridge.open with no doc mutation; extended unit tests prove curated items trigger the bridge and non-curated items (the dominant case) keep current behavior; existing builtInTsCompletion.test.ts stays green.",
+    "Template popover overlay and React picker in CodeEditor: Accepting a template-bearing completion shows a positioned popover listing the templates; choose inserts the full template text (indentation-aware) and decline/dismiss inserts the bare identifier; the React picker lives in its own .tsx file under src/components/ (react-refresh compliant), CodeEditor.tsx mounts it and registers the overlay; build (tsc -b) and lint pass."
+  ],
+  "deferred": [
+    "Auto-insertion of templates on accept — the user explicitly scoped the UX to a popover picker where the user chooses or declines.",
+    "Templates for arbitrary user-defined or future types beyond the curated set — the mechanism is built first; only the first curated set (streams + a few) ships, future types add data.",
+    "Full lib.dom.d.ts web-platform type coverage — only 'Streams + a few' types are curated, not all global types.",
+    "AI/ML-generated or LanguageService-inferred template suggestions — templates are hand-curated static data only.",
+    "User-authored / persisted custom templates (saving user templates to localStorage or disk) — not requested.",
+    "Changes to the tsCheck LanguageService entrypoint or signature-help behavior — the existing Phase 0-3 completion/signature pipeline stays as-is.",
+    "The 5 sandbox service handles (sandboxServiceCompletions) — they remain owned by the sync source and never receive usage templates.",
+    "Template behavior for JS (non-TS) mode — usage templates are TS-mode only, since the built-in-type completion source that would carry them is TS-only.",
+    "template-snippet-tabstops — Fails YAGNI gate 2 (needed now): curated templates are static and field-less, so the plain function-form apply already covers them; snippetCompletion's ${}-field navigation would additionally require wiring snippetKeymap into CodeEditor.tsx's keymap list for a feature no phase needs. Revisit only if templates gain tab-stop fields.",
+    "dom-popover-e2e-tests — Fails YAGNI gate 2 (needed now): the repo has no jsdom/happy-dom test environment and no playwright harness, and the mechanism is already split so all decision/range/insert logic is Node-testable; adding a DOM test environment is a cross-cutting infra change not required by the objective's success gates. The DOM shell remains code-reviewed instead.",
+    "broad-template-curation — Fails YAGNI gate 1 (asked for) and gate 2 (needed now): the user scoped curation to the streams-plus-a-few set. The mechanism is data-driven, so templates for arbitrary or future types are a data-only addition later with zero source/wiring changes.",
+    "user-persisted-custom-templates — Fails YAGNI gate 1 (asked for): saving user-authored templates to localStorage or disk was explicitly out of scope in the scoping answers.",
+    "auto-insertion-on-accept — Fails YAGNI gate 1 (asked for): the user explicitly scoped the UX to a popover picker where the user chooses or declines; nothing auto-inserts. Building auto-insert would contradict the scoping answer.",
+    "js-mode-templates — Fails YAGNI gate 2 (needed now): usage templates are TS-mode only because the built-in-type completion source that would carry them is TS-only; there is no JS-mode consumer, so deferring blocks nothing."
+  ]
+}
