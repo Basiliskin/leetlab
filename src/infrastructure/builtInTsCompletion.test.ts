@@ -284,6 +284,11 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
   }
 
   it('opens the bridge with the resolved payload when the curated apply fires', () => {
+    // Real CodeMirror semantics for a constructor accept: `from === to
+    // === ` the cursor, a zero-width point right after the `(` - not a
+    // span over `TransformStream(` (see the walk-back regression test
+    // below, which pins that the function resolves the actual span
+    // itself rather than trusting these raw args as the replace range).
     const doc = `new TransformStream(`
     const apply = buildUsageTemplateApply('TransformStream')
     const { view, dispatches } = stubView({
@@ -291,7 +296,7 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
       doc,
     })
 
-    apply(view, { label: 'TransformStream' } as never, 4, doc.length)
+    apply(view, { label: 'TransformStream' } as never, doc.length, doc.length)
 
     const state = getState()
     expect(state, 'bridge should have opened on the curated apply').not.toBeNull()
@@ -300,7 +305,9 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
     expect(state!.templates[0].label).toBeTruthy()
     expect(state!.coords).toEqual({ x: 42, y: 25 })
     expect(state!.source).toBe(doc)
-    expect(state!.from).toBe(4)
+    // Walked back over the whole `new TransformStream(` prefix, not
+    // just the zero-width point CodeMirror passed in.
+    expect(state!.from).toBe(0)
     expect(state!.to).toBe(doc.length)
     expect(state!.pos).toBe(doc.length)
     // The apply never mutates the doc itself - the picker (phase 4) does
@@ -309,6 +316,37 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
     // (no completion field registered), so `closeCompletion` bails out
     // without dispatching and the transaction log stays empty here.
     expect(dispatches).toEqual([])
+  })
+
+  it('walks back over the already-typed `new Name(` and swallows the auto-closed `)` (regression: no `new Name( new Name(...))` duplication)', () => {
+    // `closeBrackets()` auto-inserts the matching `)` the instant the
+    // user types `(`, so by accept time the live document already has
+    // an empty `()` pair sitting right where the completion fired.
+    // `from === to === pos` is CodeMirror's real shape for a
+    // constructor accept: a zero-width point between the two parens.
+    // A prior version of `buildUsageTemplateApply` forwarded that raw
+    // zero-width range straight through as the bridge's replace range,
+    // so the picker's splice landed *between* the parens instead of
+    // replacing them - producing `new WritableStream( new
+    // WritableStream({...}))` with a stray trailing `)`.
+    const doc = 'const tmp = new WritableStream()'
+    const pos = doc.length - 1 // between `(` and the auto-closed `)`
+    const apply = buildUsageTemplateApply('WritableStream')
+    const { view } = stubView({
+      rect: { left: 10, top: 20, bottom: 30, right: 40 },
+      doc,
+    })
+
+    apply(view, { label: 'WritableStream' } as never, pos, pos)
+
+    const state = getState()
+    expect(state).not.toBeNull()
+    expect(state!.from).toBe(doc.indexOf('new WritableStream('))
+    // `to` extends one past `pos` - past the auto-closed `)` - so the
+    // splice replaces the whole `new WritableStream()` call, not just
+    // the empty space between its parens.
+    expect(state!.to).toBe(doc.length)
+    expect(doc.slice(state!.from, state!.to)).toBe('new WritableStream()')
   })
 
   it('falls back to the `to` coords when the `from` coords are unavailable', () => {
@@ -321,7 +359,7 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
       dispatch: () => {},
     } as unknown as Parameters<ReturnType<typeof buildUsageTemplateApply>>[0]
 
-    apply(view, { label: 'AbortController' } as never, 4, doc.length)
+    apply(view, { label: 'AbortController' } as never, doc.length, doc.length)
 
     const state = getState()
     expect(state).not.toBeNull()

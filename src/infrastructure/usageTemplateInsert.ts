@@ -172,8 +172,24 @@ export function insertTemplate(
   cursorIndent: string,
 ): { text: string; cursor: number } {
   const reindented = reindentTemplateBody(template.text, cursorIndent)
-  const text = source.slice(0, range.from) + reindented + source.slice(range.to)
-  return { text, cursor: range.from + reindented.length }
+  // `reindentTemplateBody` prepends `cursorIndent` to every line,
+  // including the head - correct when read as "shift this whole block
+  // right by N spaces." But `range.from` (where the head actually gets
+  // spliced) is essentially never at true column 0 of a line: it's the
+  // start of `new Name(` or a bare identifier, sitting after other
+  // already-typed text on the same line (`const t = `, or a nested
+  // line's own indent that's already part of `source.slice(0,
+  // range.from)`). Keeping the head's copy of `cursorIndent` would
+  // insert a redundant run of whitespace mid-line (`const t =     new
+  // Name({` instead of `const t = new Name({`). Strip it back off the
+  // head only; continuation lines keep theirs so the body still nests
+  // visually under the head regardless of how deep the head sits.
+  const spliced =
+    cursorIndent && reindented.startsWith(cursorIndent)
+      ? reindented.slice(cursorIndent.length)
+      : reindented
+  const text = source.slice(0, range.from) + spliced + source.slice(range.to)
+  return { text, cursor: range.from + spliced.length }
 }
 
 /**

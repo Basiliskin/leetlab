@@ -37,7 +37,7 @@ import type { EditorView } from '@codemirror/view'
 import { SANDBOX_SERVICE_CONSTRUCTORS } from '../services/sandbox-bindings'
 import { open as openPopover } from './popoverBridge'
 import { getCompletions, type TsCompletionEntry } from './tsCheck'
-import { lookupUsageTemplates } from './usageTemplateInsert'
+import { lookupUsageTemplates, resolveReplacementRange } from './usageTemplateInsert'
 
 /** The 5 sandbox handle names; these belong to the sync service source. */
 const SERVICE_HANDLES = new Set(Object.keys(SANDBOX_SERVICE_CONSTRUCTORS))
@@ -159,15 +159,30 @@ function toCompletion(entry: TsCompletionEntry): Completion {
  * callback is a plain `(view, completion, from, to) => void`, matching
  * CodeMirror's documented function-form `apply` signature.
  *
- * Three out-conditions fall through to no-op so a curio completion never
+ * Four out-conditions fall through to no-op so a curio completion never
  * crashes the editor:
  *   - Empty / missing template list (defensive; data invariant forbids
  *     but we don't trust data we don't own).
+ *   - `resolveReplacementRange` returns null (defensive; the ctor regex
+ *     that got us into this branch and the walk-back regex are meant
+ *     to stay in lockstep, but we don't trust that at a distance).
  *   - `coordsAtPos` returns null (view not measured yet, off-screen,
  *     zero-sized editor, etc.). The popover positions itself later in
  *     Phase 4 via the bridge's `update`; we still open.
  *   - Both `from` and `to` coordinates are null. The popover without
  *     coords is unusable, so we skip - the user can accept again.
+ *
+ * `from`/`to` as CodeMirror hands them to a constructor accept are a
+ * zero-width point right after the `(` the user just typed (`from ===
+ * to === ` the cursor) - they do NOT span the `new Name(` text already
+ * on the line. Splicing the template in at that raw point (as an
+ * earlier version of this function did) leaves the already-typed
+ * `new Name(` sitting right before the inserted template's own `new
+ * Name({...})`, producing `new Name( new Name({...})`. The fix is to
+ * run the same walk-back `resolveReplacementRange` uses to resolve the
+ * *actual* `new Name(` span before opening the popover, so the choose/
+ * decline splice in `usageTemplateDispatch.ts` replaces the whole
+ * thing instead of inserting next to it.
  */
 export function buildUsageTemplateApply(
   label: string,
@@ -175,16 +190,29 @@ export function buildUsageTemplateApply(
   return (view, _completion, from, to) => {
     const templates = lookupUsageTemplates(label)
     if (!templates || templates.length === 0) return
-    const anchor = view.coordsAtPos(from) ?? view.coordsAtPos(to)
+    const source = view.state.doc.toString()
+    const range = resolveReplacementRange(source, to, from, to)
+    if (!range) return
+    // Constructor accept (`from === to`): the ctor-trigger regex that
+    // routed us here requires the cursor to sit right after `(` with
+    // nothing typed after it, so `closeBrackets()` will already have
+    // auto-inserted the matching `)` immediately at `range.to`.
+    // Swallow it into the replaced span - otherwise the chosen
+    // template's own closing paren is followed by a redundant, now-
+    // orphaned `)` (e.g. `new WritableStream({ ... })` + a leftover
+    // `)`).
+    const replaceTo =
+      from === to && source[range.to] === ')' ? range.to + 1 : range.to
+    const anchor = view.coordsAtPos(range.from) ?? view.coordsAtPos(replaceTo)
     if (!anchor) return
     openPopover({
       templates,
       label,
       coords: { x: anchor.left, y: anchor.bottom },
-      source: view.state.doc.toString(),
-      pos: to,
-      from,
-      to,
+      source,
+      pos: replaceTo,
+      from: range.from,
+      to: replaceTo,
     })
     closeCompletion(view)
   }

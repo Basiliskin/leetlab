@@ -143,7 +143,21 @@ export function dispatchChoose(
   // The re-indented template body is the *inserted* segment; the
   // surrounding document is left untouched by `view.dispatch`'s
   // `changes` shape. Cursor lands just past the inserted block.
-  const inserted = reindentTemplateBody(template.text, indent)
+  const reindented = reindentTemplateBody(template.text, indent)
+  // `reindentTemplateBody` prepends `indent` to every line, including
+  // the head - correct for "shift this whole block right by N," but
+  // `state.from` (where the head actually splices in) is essentially
+  // never at true column 0: it's the start of `new Name(` or a bare
+  // identifier, sitting after other already-typed text on the same
+  // line (`const t = `, a nested line's own indent already present in
+  // the untouched prefix, etc). Keeping the head's copy of `indent`
+  // would insert a redundant run of whitespace mid-line - e.g. `const
+  // t =     new Name({` instead of `const t = new Name({`. Strip it
+  // back off the head only; continuation lines keep theirs so the
+  // body still nests visually under the head regardless of how deep
+  // the head sits in its own line.
+  const inserted =
+    indent && reindented.startsWith(indent) ? reindented.slice(indent.length) : reindented
   return {
     changes: { from: state.from, to: state.to, insert: inserted },
     selection: { anchor: state.from + inserted.length },

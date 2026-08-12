@@ -221,30 +221,38 @@ describe('reindentTemplateBody + insertTemplate (template-body-reindent)', () =>
     expect(indent).toBe('    ')
     const out = insertTemplate(source, range, USAGE_TEMPLATES.TransformStream[0], indent)
     // Body lines (2..N) are shifted by the cursor's 4 spaces relative
-    // to the template's own offsets.
-    const expectedBody = reindentTemplateBody(
+    // to the template's own offsets. The head is NOT - it splices in
+    // right where `new` already sat, mid-line after `const t = `,
+    // which already carries the line's 4-space indent in the
+    // untouched prefix; `insertTemplate` strips the redundant copy
+    // `reindentTemplateBody` put on the head back off.
+    const reindentedBody = reindentTemplateBody(
       USAGE_TEMPLATES.TransformStream[0].text,
       indent,
     )
+    const expectedSpliced = reindentedBody.startsWith(indent)
+      ? reindentedBody.slice(indent.length)
+      : reindentedBody
     expect(out.text).toBe(
-      source.slice(0, range.from) + expectedBody + source.slice(range.to),
+      source.slice(0, range.from) + expectedSpliced + source.slice(range.to),
     )
     // No `new new` regression even at a nested site.
     expect(out.text).not.toContain('new new')
-    // The function header is preserved; the body sits 4 spaces in.
-    expect(out.text.startsWith('function f() {\n    const t = ')).toBe(true)
+    // The function header is preserved; the head continues directly
+    // off `const t = ` with no extra gap.
+    expect(out.text.startsWith('function f() {\n    const t = new TransformStream({')).toBe(true)
     expect(out.text).toContain('      transform(chunk, controller) {')
   })
 
-  it('insertTemplate on a one-line template still works (AbortController)', () => {
-    // AbortController's text has no newlines; re-indent still applies
-    // the cursor indent to the only line.
+  it('insertTemplate strips the head-line indent so it splices cleanly mid-line (AbortController, multi-line template)', () => {
     const source = 'const c = new AbortController('
     const openParen = source.length
     const range = resolveReplacementRange(source, openParen, openParen, openParen)!
     const out = insertTemplate(source, range, USAGE_TEMPLATES.AbortController[0], '  ')
-    expect(out.text.startsWith('const c = ')).toBe(true)
-    expect(out.text).toContain('  const controller = new AbortController();')
+    // The head (`const controller = new AbortController();`) continues
+    // directly off `const c = ` - no redundant indent shoved between
+    // them. Only the continuation lines pick up the 2-space indent.
+    expect(out.text.startsWith('const c = const controller = new AbortController();')).toBe(true)
     expect(out.text).toContain('  const signal = controller.signal;')
     expect(out.text).toContain('  controller.abort();')
   })

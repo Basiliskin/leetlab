@@ -119,10 +119,13 @@ describe('dispatchChoose (choose-inserts-full-template)', () => {
     const to = pos
     const state = fixtureState({ source, from, to, pos })
     const out = dispatchChoose(state, state.templates[0])
-    // Head sits at the cursor's 4-space indent; inner body lines
-    // are shifted by 4 more spaces relative to the template's own
-    // 2-/4-space offsets.
-    expect(out.changes.insert).toContain('    new TransformStream({')
+    // The head splices in right where `new` already sat (mid-line,
+    // after `const t = `) - it does NOT carry an extra copy of the
+    // cursor's 4-space line indent, since that indent is already
+    // present in the untouched `const t = ` prefix. Only the
+    // continuation lines pick up the 4-space offset, shifting the
+    // template's own 2-/4-space body to 6/8.
+    expect(out.changes.insert.startsWith('new TransformStream({')).toBe(true)
     expect(out.changes.insert).toContain('      transform(chunk, controller) {')
     expect(out.changes.insert).toContain('        controller.enqueue(chunk);')
   })
