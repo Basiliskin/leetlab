@@ -25,11 +25,12 @@
  * for-byte, so this layer is a strict superset.
  */
 
-import type {
-  Completion,
-  CompletionContext,
-  CompletionResult,
-  CompletionSource,
+import {
+  closeCompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
+  type CompletionSource,
 } from '@codemirror/autocomplete'
 import { syntaxTree } from '@codemirror/language'
 import type { EditorView } from '@codemirror/view'
@@ -137,9 +138,21 @@ function toCompletion(entry: TsCompletionEntry): Completion {
  * Build the function-form `apply` callback a curated completion item
  * carries. The callback opens the popover bridge at the accept site with
  * the resolved range, the current document text, and viewport coords
- * derived from the editor view - and intentionally returns without
- * dispatching, so the document is not mutated by accept itself. The
- * popover (phase 4) drives every later edit.
+ * derived from the editor view - and intentionally does not itself
+ * splice any document text, so the document is not mutated by accept
+ * itself. The popover (phase 4) drives every later edit.
+ *
+ * It does dispatch one thing directly: `closeCompletion(view)`. When a
+ * completion's `apply` is a function (as opposed to a string), CodeMirror's
+ * `applyCompletion` just calls it and returns - it never dispatches a
+ * transaction of its own, so nothing tells the native completion dropdown
+ * to close. Left alone, the dropdown stays open and mounted (still
+ * showing the accepted "WritableStream" row) forever, since neither
+ * `tr.docChanged` nor `tr.selection` fire without an explicit dispatch.
+ * It then sits on top of / behind the usage-template popover and keeps
+ * eating keyboard input via `completionKeymap`. Closing it explicitly
+ * here is what the string-`apply` path gets for free from
+ * `insertCompletionText`'s own dispatch.
  *
  * Exported so the unit tests can drive it directly with a stub view,
  * sidestepping the brittleness of a real CoordinateEvent / DOM. The
@@ -173,6 +186,7 @@ export function buildUsageTemplateApply(
       from,
       to,
     })
+    closeCompletion(view)
   }
 }
 

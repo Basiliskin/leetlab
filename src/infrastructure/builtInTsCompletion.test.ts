@@ -248,7 +248,12 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
         if (typeof pos !== 'number') return null
         return opts.coordsBothNull ? null : opts.rect ?? null
       },
-      state: { doc: { toString: () => opts.doc ?? '' } },
+      // `field` stands in for the real `completionState` field lookup
+      // `closeCompletion` (from `@codemirror/autocomplete`) performs
+      // internally; returning `undefined` mirrors "no completion field
+      // registered on this state" so `closeCompletion` bails out without
+      // dispatching, keeping this stub DOM-free like the rest of the file.
+      state: { doc: { toString: () => opts.doc ?? '' }, field: () => undefined },
       dispatch: (...args: unknown[]) => {
         dispatches.push(args)
       },
@@ -298,9 +303,11 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
     expect(state!.from).toBe(4)
     expect(state!.to).toBe(doc.length)
     expect(state!.pos).toBe(doc.length)
-    // The apply is the *only* call site that can mutate the doc; the
-    // function returns without dispatching, so the editor's transaction
-    // log stays empty here.
+    // The apply never mutates the doc itself - the picker (phase 4) does
+    // that. It does call `closeCompletion(view)` to dismiss the native
+    // completion dropdown, but the stub's `field()` returns `undefined`
+    // (no completion field registered), so `closeCompletion` bails out
+    // without dispatching and the transaction log stays empty here.
     expect(dispatches).toEqual([])
   })
 
@@ -310,7 +317,7 @@ describe('builtInTsCompletion usage-template wiring (Phase 3)', () => {
     // coordsAtPos returns null for any pos except the second (the `to`).
     const view = {
       coordsAtPos: (pos: number) => (pos === doc.length ? { left: 1, top: 2, bottom: 3, right: 4 } : null),
-      state: { doc: { toString: () => doc } },
+      state: { doc: { toString: () => doc }, field: () => undefined },
       dispatch: () => {},
     } as unknown as Parameters<ReturnType<typeof buildUsageTemplateApply>>[0]
 

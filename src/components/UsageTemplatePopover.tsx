@@ -15,11 +15,15 @@
  * picker never dispatches; the extension never auto-inserts; the only
  * `view.dispatch` calls come from explicit user actions.
  *
- * Keyboard handling: handled keys (`Enter`, `Space`, `Escape`,
- * `ArrowUp`, `ArrowDown`) call `event.stopPropagation()` so the
- * editor's keymap does not see them — Escape would otherwise dismiss
- * the autocomplete widget, ArrowDown would otherwise re-navigate the
- * completion list, and Enter would otherwise re-trigger accept.
+ * Keyboard handling: the popover intentionally does NOT auto-focus on
+ * mount. Auto-focus would steal focus from the editor and dismiss the
+ * autocomplete widget (CodeMirror closes it when the editor blurs),
+ * which made it impossible to interact with autocomplete while the
+ * popover was open. Instead, a high-precedence CodeMirror keymap
+ * (installed in `CodeEditor.tsx`) intercepts the picker-relevant keys
+ * when the popover is open. The keymap and the picker share the
+ * highlight index via `popoverBridge.{getHighlight,setHighlight,
+ * subscribeHighlight}`.
  *
  * The class name on the wrapper is `usage-template-popover` and is
  * styled in `CodeEditor.tsx`'s `editorTheme`. The popover inherits
@@ -27,25 +31,26 @@
  * block, which CodeMirror applies to every `TooltipView.dom`.
  *
  * State design:
- *   - `highlight` is local state (useState). It tracks which row is
- *     currently selected by mouse or keyboard.
+ *   - `highlight` lives in the popoverBridge (single source of truth).
+ *     The picker subscribes via `subscribeHighlight` so the CodeMirror
+ *     keymap and mouse-hover both update one index and the picker
+ *     re-renders on any change.
  *   - The picker intentionally has no useEffect for the highlight
- *     reset: the extension tears down and remounts the React root
- *     for every `bridge.open` (each `open` replaces the tooltip
- *     field, which CodeMirror reads as a brand-new tooltip). A new
- *     component instance starts with `highlight = -1`.
- *   - Focus is moved into the popover via a callback ref on mount
- *     (not a useEffect) so keyboard navigation works without a
- *     click, and so the lint rule against setState-in-effect is
- *     never tripped.
+ *     reset: the bridge resets to -1 on `close`, and a fresh `open`
+ *     starts the React tree at -1 because the keymap's first
+ *     ArrowDown writes the index explicitly. React preserves the
+ *     React tree across renders (the tooltip descriptor is the same
+ *     reference); the bridge's index is the per-open reset point.
  */
 
-import { useRef, useState } from 'react'
-import type { PopoverState } from '../infrastructure/popoverBridge'
+import { useEffect, useState } from 'react'
 import {
-  onPickerKeyDown,
-  shouldRenderPopover,
-} from '../infrastructure/usageTemplateDispatch'
+  getHighlight,
+  setHighlight,
+  subscribeHighlight,
+  type PopoverState,
+} from '../infrastructure/popoverBridge'
+import { shouldRenderPopover } from '../infrastructure/usageTemplateDispatch'
 import type { UsageTemplate } from '../infrastructure/typeUsageTemplates'
 
 /**
@@ -71,18 +76,6 @@ function visible(state: PopoverState | null): state is PopoverState {
   return shouldRenderPopover(state)
 }
 
-/**
- * Bounded `currentIndex` (0..N-1) so the highlight wraps cleanly.
- * The reducer returns `'next'` / `'prev'` for the arrow keys; this
- * helper applies the wrap so the picker doesn't need to know the
- * row count itself.
- */
-function wrapIndex(next: number, length: number): number {
-  if (length <= 0) return -1
-  // JS's `%` can be negative; normalize to [0, length).
-  return ((next % length) + length) % length
-}
-
 export function UsageTemplatePopover({
   state,
   onPick,
@@ -94,13 +87,13 @@ export function UsageTemplatePopover({
   // and clean up the React root. The guard runs *after* the hooks
   // below to keep the hooks order stable across renders.
   const isVisible = visible(state)
-  // The highlight index for keyboard navigation. Resets to -1 on
-  // each fresh mount: the extension tears down the React tree and
-  // mounts a new one for every open (each `open` call replaces the
-  // tooltip field, which CodeMirror reads as a brand-new tooltip).
-  // The new component instance starts with `highlight = -1`.
-  const [highlight, setHighlight] = useState<number>(-1)
-  const rootRef = useRef<HTMLUListElement | null>(null)
+  // The highlight index for keyboard navigation. Stored in the
+  // popoverBridge (a module-level singleton) so the CodeMirror
+  // keymap can mutate it; the picker subscribes and re-renders.
+  // The bridge resets the index to -1 on `close`, so a fresh
+  // `open` starts at the unselected state without a useEffect.
+  const [highlight, setLocalHighlight] = useState<number>(getHighlight())
+  useEffect(() => subscribeHighlight(setLocalHighlight), [])
 
   if (!isVisible) return null
   // The narrowing above lets TS see `state` as non-null here.
@@ -109,42 +102,27 @@ export function UsageTemplatePopover({
 
   return (
     <ul
-      ref={(node) => {
-        // Focus the popover on a fresh mount so keyboard navigation
-        // works without a click. This is a callback ref, not an
-        // effect: when React assigns a new DOM node (after a
-        // remount) we focus it. When the node goes away (unmount),
-        // we don't focus — the editor's focus returns naturally.
-        rootRef.current = node
-        if (node) node.focus()
-      }}
       className="usage-template-popover"
       role="listbox"
       aria-label="Usage templates"
       tabIndex={-1}
-      onKeyDown={(event) => {
-        const action = onPickerKeyDown(event, highlight)
-        if (action === null) return
-        // Suppress handled keys from reaching the editor keymap.
-        // `preventDefault` stops Escape from dismissing the
-        // autocomplete widget and Enter from triggering a re-accept.
-        event.preventDefault()
+      // The popover is intentionally NOT auto-focused: focusing the
+      // picker steals focus from the editor and dismisses the
+      // autocomplete widget. Keyboard nav flows through a high-
+      // precedence CodeMirror keymap (CodeEditor.tsx) that calls
+      // `setHighlight` / `onPick` / `onDecline` on the bridge and
+      // picker respectively. The `tabIndex={-1}` is kept so the
+      // popover remains focusable programmatically (e.g. when a
+      // future a11y path needs to focus the picker); it is just not
+      // invoked on mount.
+      onMouseDown={(event) => {
+        // A mousedown inside the popover must not be swallowed by
+        // the editor-level click-outside handler in CodeEditor.tsx
+        // — that handler listens at the document with capture, so
+        // it would otherwise fire `closePopover` before the row's
+        // click handler runs. Stopping the event here keeps the
+        // popover interactive when the user is choosing a row.
         event.stopPropagation()
-        if (action === 'decline') {
-          onDecline()
-          return
-        }
-        if (action === 'next') {
-          setHighlight((cur) => wrapIndex(cur + 1, templates.length))
-          return
-        }
-        if (action === 'prev') {
-          setHighlight((cur) => wrapIndex(cur - 1, templates.length))
-          return
-        }
-        if (action === 'pick' && highlight >= 0 && highlight < templates.length) {
-          onPick(templates[highlight])
-        }
       }}
     >
       <li

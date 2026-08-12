@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { EditorView, keymap, showTooltip, ViewPlugin, type Tooltip, type TooltipView } from "@codemirror/view";
-import { Annotation, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorView, keymap, showTooltip, ViewPlugin, type Tooltip, type TooltipView, type ViewUpdate } from "@codemirror/view";
+import { Annotation, EditorState, type Extension, Prec, StateEffect, StateField } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { Diagnostic, linter, lintGutter } from "@codemirror/lint";
@@ -25,6 +25,8 @@ import { editorCompletionSources } from "../infrastructure/editorCompletions";
 import {
   close as closePopover,
   getState as getPopoverState,
+  getHighlight,
+  setHighlight,
   subscribe as subscribePopover,
   type PopoverState,
 } from "../infrastructure/popoverBridge";
@@ -46,16 +48,14 @@ const external = Annotation.define<boolean>();
  * `null` when the popover is closed. The `provide` plugs this field
  * into the `showTooltip` facet — CodeMirror's tooltip rendering
  * machinery reads the field's value to decide what to mount. The
- * field is updated exclusively via `setUsageTemplateTooltip.of(...)`
- * from the bridge listener / `handlePick` / `handleDecline` paths.
- *
- * `Tooltip | null` is the facet's input shape (a single tooltip per
- * open); the field is initialised to `null` and never holds an
- * array. Storing the `Tooltip` value (the full descriptor with
- * `pos`, `create`, `getCoords`, etc.) means CodeMirror re-evaluates
- * the tooltip only when the field changes — and the picker's
- * `TooltipView.destroy` runs in lockstep with the field going back
- * to `null`.
+ * field is updated via `setUsageTemplateTooltip.of(...)` (open /
+ * hide) or automatically clears to `null` whenever the document
+ * changes (the bridge-anchor payload is stale as soon as the doc
+ * moves, so we tear the popover down as part of the same
+ * transaction — no second `view.dispatch` from the plugin's
+ * `update` method, which would recurse into CodeMirror and throw
+ * "Calls to EditorView.update are not allowed while an update is
+ * in progress").
  */
 const usageTemplateTooltipField = StateField.define<Tooltip | null>({
   create: () => null,
@@ -63,6 +63,16 @@ const usageTemplateTooltipField = StateField.define<Tooltip | null>({
     for (const e of tr.effects) {
       if (e.is(setUsageTemplateTooltip)) return e.value
     }
+    // Any doc change makes the bridge-anchor payload (source/pos/
+    // from/to) stale: the resolved range no longer lines up with
+    // the document. Reset the field to `null` as part of this
+    // transaction so CodeMirror's tooltip manager tears the
+    // `TooltipView` down on the same dispatch that moved the doc.
+    // This is the doc-drift half of the rubric; the other half
+    // (selecting a row / decline / click-outside) flows through
+    // `setUsageTemplateTooltip.of(null)` dispatched from a
+    // microtask so it never re-enters an in-flight update.
+    if (tr.docChanged) return null
     return value
   },
   provide: (field) => showTooltip.from(field),
@@ -123,6 +133,31 @@ const editorTheme = EditorView.theme({
   ".cm-tooltip-autocomplete ul li[aria-selected]": {
     backgroundColor: "rgba(255,161,22,.15)",
     color: "var(--amber)",
+  },
+  // The library's own baseTheme caps the autocomplete list at
+  // min(700px, 95vw) with `white-space: nowrap` + ellipsis on each row.
+  // 95vw is the *browser window* width, not the (much narrower) editor
+  // pane in this split layout, so a long constructor signature (e.g.
+  // `new WritableStream(underlyingSink?: UnderlyingSink<any> | ...`)
+  // renders as one unbroken line wider than the pane and bleeds past
+  // both edges instead of eliding. Cap the list to the pane's realistic
+  // width and let rows wrap instead of overflowing.
+  ".cm-tooltip-autocomplete": {
+    maxWidth: "min(380px, calc(100vw - 32px))",
+  },
+  ".cm-tooltip-autocomplete > ul": {
+    whiteSpace: "normal",
+    maxWidth: "min(380px, calc(100vw - 32px))",
+  },
+  ".cm-tooltip-autocomplete > ul > li": {
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    textOverflow: "clip",
+    lineHeight: "1.4",
+  },
+  ".cm-completionDetail": {
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
   },
   // Usage-template popover (Phase 4, codeeditor-usage-templates). Inherits
   // the .cm-tooltip panel chrome (background/border/font/color) from the
@@ -270,6 +305,17 @@ function usageTemplatePopoverExtension() {
       // React root (e.g. queued from a keypress right before teardown)
       // is a no-op rather than a stray dispatch.
       private mounted = false;
+      // `true` once `destroy()` has run. Distinct from `mounted`:
+      // `mounted` only flips true *inside* the tooltip's own `mount()`
+      // callback, which itself only runs after a dispatch that
+      // `safeDispatch` performs. Gating `safeDispatch` on `mounted`
+      // would mean the very first `showTooltip()` call of a fresh
+      // plugin instance - before any tooltip has ever mounted - could
+      // never dispatch, so `mounted` could never become true, so the
+      // popover could never open on the first accept. `destroyed`
+      // is the thing `safeDispatch` actually needs: "has this plugin
+      // instance been torn down since the microtask was scheduled."
+      private destroyed = false;
       // The current `PopoverState` snapshot. Captured here (not in a
       // module-level slot) so each editor view has its own anchor;
       // the bridge is shared because there is only one editor in
@@ -290,10 +336,20 @@ function usageTemplatePopoverExtension() {
           this.showTooltip();
         }
         // Click-outside / window-blur dismiss:
-        //   - click-outside: a mousedown anywhere not inside the
-        //     popover triggers decline. We use a capture-phase
-        //     listener on the document so the popover's own clicks
-        //     (which fire *inside* the popover) are not seen here.
+        //   - click-outside: a `mousedown` anywhere in the document
+        //     *not* inside the popover (`.usage-template-popover`) or
+        //     the autocomplete dropdown (`.cm-tooltip-autocomplete`)
+        //     closes the popover. Capture-phase listener so the
+        //     dismiss fires before the click handler on any other
+        //     element (sidebar links, the result panel, etc.) — a
+        //     non-capture listener would let a sidebar click navigate
+        //     first and leave the popover on screen. The popover's
+        //     own `onMouseDown` calls `stopPropagation` so its rows
+        //     are not affected, and the autocomplete rows are
+        //     filtered out so users can pick a different completion
+        //     without first dismissing the popover (the completion
+        //     commit still closes the popover via doc-change
+        //     field-clear).
         //   - window-blur: alt-tab / devtools / window-minimize
         //     fires `blur` on the window. Decline is a no-op when
         //     the popover is already closed.
@@ -301,20 +357,31 @@ function usageTemplatePopoverExtension() {
         window.addEventListener("blur", this.onWindowBlur);
       }
 
-      update(update: { docChanged: boolean }): void {
-        // The bridge-anchor payload (source/pos/from/to) is a
-        // snapshot of the document at accept time. If the doc moves
-        // under us, the resolved range is no longer meaningful —
-        // close the popover without dispatching. Pure selection
-        // changes are ignored; phase 3's `coordsAtPos` was measured
-        // at accept time and we don't re-anchor.
-        if (this.currentState !== null && update.docChanged) {
+      update(update: ViewUpdate): void {
+        // The tooltip's own teardown is handled by the field's
+        // `update` (see `usageTemplateTooltipField`): any
+        // `tr.docChanged` resets the field to `null` as part of
+        // the same transaction, so CodeMirror's tooltip manager
+        // tears the `TooltipView` down without us dispatching
+        // anything. But the field is CodeMirror-local — it does
+        // NOT clear the `popoverBridge` module singleton. Without
+        // this, typing past an open popover (without explicitly
+        // picking/declining) leaves the bridge's `currentState`
+        // stale-but-non-null, and `usageTemplatePickerKeymap`
+        // (Prec.high) keeps intercepting Enter for every later,
+        // unrelated completion — swallowing the keypress before
+        // the normal `completionKeymap` accept ever runs. Mirror
+        // the field's doc-drift clear here so the bridge and the
+        // tooltip stay in lockstep.
+        if (update.docChanged && this.currentState !== null) {
+          this.currentState = null;
           closePopover();
         }
       }
 
       destroy(): void {
         this.mounted = false;
+        this.destroyed = true;
         this.unsubscribe();
         document.removeEventListener("mousedown", this.onDocMouseDown, true);
         window.removeEventListener("blur", this.onWindowBlur);
@@ -324,7 +391,10 @@ function usageTemplatePopoverExtension() {
        * Build and dispatch the tooltip descriptor that mounts the
        * popover at the bridge's stored coords. The tooltip is a
        * host element for a React root; the React `UsageTemplatePopover`
-       * renders the rows inside it.
+       * renders the rows inside it. The dispatch goes through
+       * `safeDispatch` so a bridge notification fired from inside
+       * a CodeMirror update (e.g. the constructor or another
+       * plugin's `update`) never re-enters an in-flight update.
        */
       private showTooltip(): void {
         const state = this.currentState;
@@ -371,15 +441,44 @@ function usageTemplatePopoverExtension() {
             };
           },
         };
-        this.view.dispatch({ effects: setUsageTemplateTooltip.of(tooltip) });
+        this.safeDispatch({ effects: setUsageTemplateTooltip.of(tooltip) });
       }
 
       /**
-       * Clear the popover. Dispatched when the bridge closes (e.g.
-       * the user picks a row) or when the document drifts under us.
+       * Dispatch a `view.dispatch` from outside a CodeMirror
+       * transaction, deferring to a microtask so we never re-enter
+       * an in-flight update. CodeMirror throws "Calls to
+       * EditorView.update are not allowed while an update is in
+       * progress" if any synchronous bridge listener
+       * (e.g. `popoverBridge.close()` notifying subscribers) calls
+       * `view.dispatch` from inside another dispatch's update
+       * cycle — e.g. the document `mousedown` handler firing while
+       * CodeMirror is processing its own `mousedown` chain, or a
+       * `handlePick` returning synchronously and the field-clear
+       * path trying to dispatch again. Deferring makes the
+       * teardown dispatch a fresh, standalone transaction.
+       */
+      private safeDispatch(spec: Parameters<EditorView["dispatch"]>[0]): void {
+        queueMicrotask(() => {
+          // The view may have been destroyed between the schedule
+          // and the microtask firing (e.g. the user navigates away
+          // to a different problem). `view.destroy()` is a no-op
+          // here for the destroyed view, but the dispatch will
+          // throw if the DOM is gone — guard with `this.destroyed`
+          // to keep the contract clean.
+          if (this.destroyed) return;
+          this.view.dispatch(spec);
+        });
+      }
+
+      /**
+       * Clear the popover. Defer the dispatch through `safeDispatch`
+       * so a `close` triggered from inside a CodeMirror update (a
+       * user's `mousedown` during an open transaction) never
+       * re-enters an in-flight update.
        */
       private hideTooltip(): void {
-        this.view.dispatch({ effects: setUsageTemplateTooltip.of(null) });
+        this.safeDispatch({ effects: setUsageTemplateTooltip.of(null) });
       }
 
       private handleBridge(state: PopoverState | null): void {
@@ -393,25 +492,29 @@ function usageTemplatePopoverExtension() {
 
       /**
        * User picked a template row. Compute the dispatch via
-       * `dispatchChoose`, hand it to `view.dispatch`, and close the
-       * bridge so the `showTooltip.of(null)` effect tears the
-       * tooltip down. Wrapped in `try / finally` so a thrown
-       * dispatch (e.g. invalid range) still tears the popover down.
+       * `dispatchChoose` and hand it to `view.dispatch`. The
+       * tooltip field's own `update` clears the field to `null`
+       * on `tr.docChanged`, so the splice transaction carries the
+       * tooltip teardown with it — no second dispatch needed.
+       * `closePopover` is called for any non-CodeMirror bridge
+       * subscribers; the field already reflects the close in the
+       * editor's own state.
        */
       private handlePick(template: UsageTemplate): void {
         if (!this.mounted) return;
         const state = this.currentState;
         if (!state) return;
-        try {
-          const payload = dispatchChoose(state, template);
-          this.view.dispatch({
-            changes: payload.changes,
-            selection: payload.selection,
-            annotations: payload.annotations,
-          });
-        } finally {
-          closePopover();
-        }
+        const payload = dispatchChoose(state, template);
+        this.view.dispatch({
+          changes: payload.changes,
+          selection: payload.selection,
+          annotations: payload.annotations,
+        });
+        // The splice transaction's `tr.docChanged = true` triggers
+        // the field's own auto-clear in the same transaction; we
+        // still notify the bridge so any other subscribers see
+        // the close.
+        closePopover();
       }
 
       /**
@@ -423,34 +526,49 @@ function usageTemplatePopoverExtension() {
         if (!this.mounted) return;
         const state = this.currentState;
         if (!state) return;
-        try {
-          const payload = dispatchDecline(state);
-          this.view.dispatch({
-            changes: payload.changes,
-            selection: payload.selection,
-            annotations: payload.annotations,
-          });
-        } finally {
-          closePopover();
-        }
+        const payload = dispatchDecline(state);
+        this.view.dispatch({
+          changes: payload.changes,
+          selection: payload.selection,
+          annotations: payload.annotations,
+        });
+        closePopover();
       }
 
       /**
-       * Document-level click handler. A mousedown anywhere not
-       * inside the popover closes it (which triggers decline via
-       * the `close` → `handleBridge(null)` → `hideTooltip` path).
-       * Inside-the-popover clicks are filtered out by walking up
-       * the DOM tree from the click target — the picker renders
-       * `<ul class="usage-template-popover">` inside the popover,
-       * and `target.closest(".usage-template-popover")` matches
-       * any descendant. The capture phase is used so the close
-       * fires before any bubbled click handler on the editor.
+       * Document-level capture mousedown handler. A mousedown
+       * anywhere in the document *not* inside the popover
+       * (`.usage-template-popover`) or the autocomplete dropdown
+       * (`.cm-tooltip-autocomplete`) closes the popover (which
+       * triggers decline via the `close` → `handleBridge(null)` →
+       * `hideTooltip` path). The popover and autocomplete filter
+       * is implemented by walking up the DOM tree from the click
+       * target via `target.closest(...)`.
+       *
+       * The listener is attached at the document with capture so a
+       * click on the sidebar / status bar / any non-editor surface
+       * dismisses the popover before the click handler on that
+       * surface navigates away. Inside-the-popover clicks are
+       * filtered so the row's `onClick` (and pick / decline) runs
+       * normally; the popover's own `onMouseDown` also calls
+       * `stopPropagation` as a belt-and-suspenders guard so the
+       * capture handler still bails out even if a future refactor
+       * removes the `closest` filter.
        */
       private onDocMouseDown = (event: MouseEvent): void => {
         if (this.currentState === null) return;
         const target = event.target;
-        if (target instanceof Element && target.closest(".usage-template-popover")) {
-          return;
+        if (target instanceof Element) {
+          // Inside the popover: let the row's onClick handle pick /
+          // decline. Inside the autocomplete dropdown: let the
+          // completion commit run, which closes the popover via
+          // the field's doc-change auto-clear.
+          if (
+            target.closest(".usage-template-popover") ||
+            target.closest(".cm-tooltip-autocomplete")
+          ) {
+            return;
+          }
         }
         closePopover();
       };
@@ -474,6 +592,104 @@ function usageTemplatePopoverExtension() {
       };
     },
   );
+}
+
+/**
+ * Bounded `currentIndex` (0..N-1) so the highlight wraps cleanly.
+ * Mirrors the helper the picker used pre-keymap; the picker now
+ * reads the index from the bridge, so the keyboard path is the
+ * only caller.
+ */
+function wrapPickerIndex(next: number, length: number): number {
+  if (length <= 0) return -1
+  // JS's `%` can be negative; normalize to [0, length).
+  return ((next % length) + length) % length
+}
+
+/**
+ * High-precedence keymap that intercepts the picker-relevant keys
+ * when the usage-template popover is open. The popover is
+ * intentionally NOT auto-focused (focusing would dismiss the
+ * autocomplete widget), so the editor keeps focus and these keys
+ * would otherwise move the cursor / insert a newline / etc.
+ *
+ * Returns `true` from `run` (handled) only when the popover is
+ * open and the key is in the picker's set, so every other key
+ * falls through to the editor's default keymap.
+ */
+function usageTemplatePickerKeymap(): Extension {
+  return Prec.high(
+    keymap.of([
+      {
+        key: "ArrowDown",
+        run: () => {
+          const state = getPopoverState();
+          if (!state) return false;
+          setHighlight(wrapPickerIndex(getHighlight() + 1, state.templates.length));
+          return true;
+        },
+      },
+      {
+        key: "ArrowUp",
+        run: () => {
+          const state = getPopoverState();
+          if (!state) return false;
+          setHighlight(wrapPickerIndex(getHighlight() - 1, state.templates.length));
+          return true;
+        },
+      },
+      {
+        key: "Enter",
+        run: (view) => {
+          const state = getPopoverState();
+          if (!state) return false;
+          const idx = getHighlight();
+          // Enter with no row highlighted declines (matches the
+          // picker's pre-keymap behavior: `currentIndex >= 0` was
+          // the gate for `pick`; otherwise the picker let the
+          // editor handle Enter).
+          if (idx < 0 || idx >= state.templates.length) {
+            pickByIndex(view, -1);
+            return true;
+          }
+          pickByIndex(view, idx);
+          return true;
+        },
+      },
+      {
+        key: "Escape",
+        run: (view) => {
+          if (!getPopoverState()) return false;
+          pickByIndex(view, -1);
+          return true;
+        },
+      },
+    ]),
+  );
+}
+
+/**
+ * Splice the template at `index`, or decline when `index === -1`.
+ * Dispatched straight from the keymap (no microtask): the picker
+ * only fires on an explicit key, so there is no nested-update
+ * re-entry to guard against. The view.dispatch below is the same
+ * one `handlePick` / `handleDecline` use inside the ViewPlugin —
+ * duplicated here so the keymap can run without owning a plugin
+ * instance.
+ */
+function pickByIndex(view: EditorView, index: number): void {
+  const state = getPopoverState();
+  if (!state) return;
+  const payload =
+    index < 0
+      ? dispatchDecline(state)
+      : dispatchChoose(state, state.templates[index]);
+  view.dispatch({
+    changes: payload.changes,
+    selection: payload.selection,
+    annotations: payload.annotations,
+  });
+  closePopover();
 }
 
 function extensionsFor(lang: "js" | "ts") {
@@ -517,8 +733,14 @@ function extensionsFor(lang: "js" | "ts") {
     // extension so CodeMirror's tooltip rendering can read it via
     // the `showTooltip.from(field)` provide. The ViewPlugin below
     // holds the bridge subscription; together they form the
-    // popover extension pair.
+    // popover extension pair. The picker keymap is registered
+    // ahead of the rest so ArrowUp / ArrowDown / Enter / Escape
+    // route to the picker when the popover is open — the editor
+    // keeps focus (the popover does not auto-focus, so it does
+    // not dismiss autocomplete), and the picker handles its own
+    // keys via the bridge's highlight state.
     usageTemplateTooltipField,
+    usageTemplatePickerKeymap(),
     usageTemplatePopoverExtension(),
   ];
 }

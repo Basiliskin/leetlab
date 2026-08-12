@@ -176,6 +176,10 @@ export function close(): boolean {
   if (currentState === null) return false
   const prev = currentState
   currentState = null
+  // Reset the picker highlight so the next open starts at -1 (no row
+  // highlighted). Subscribers don't fire — `close` only happens during
+  // teardown when no React tree is mounted anyway.
+  highlightIndex = -1
   notify(prev)
   return true
 }
@@ -194,6 +198,52 @@ export function clear(): boolean {
   return wasOpen
 }
 
+/**
+ * Highlight state for the picker (roadmap phase 4). The popover React
+ * component renders one row as active per the value, and the CodeMirror
+ * keymap installed by CodeEditor.tsx mutates it via `setHighlight` when
+ * the user presses ArrowDown / ArrowUp. Subscribers fire on every
+ * change so the React component re-renders without owning the state.
+ *
+ * Lifecycle:
+ *   - Lives outside `PopoverState` because it's UI-only and ephemeral:
+ *     the picker remounts on every `open` (CodeMirror replaces the
+ *     tooltip descriptor), and a fresh highlight of -1 is what we want.
+ *   - Resets to -1 on `close` and on `clear`, so a stale highlight from
+ *     a prior popover can't leak into a new one.
+ *   - On `open`, the popover's first render reads the current value;
+ *     the keymap writes to it on keypress.
+ *
+ * The store is intentionally module-level (a singleton) so the React
+ * popover, the keymap, and any future CodeMirror sidecar share one
+ * index. Tests reset via `__resetForTests`.
+ */
+let highlightIndex = -1
+const highlightListeners = new Set<(next: number) => void>()
+
+export function getHighlight(): number {
+  return highlightIndex
+}
+
+export function setHighlight(next: number): void {
+  if (highlightIndex === next) return
+  highlightIndex = next
+  for (const listener of highlightListeners) {
+    try {
+      listener(next)
+    } catch (err) {
+      console.error('[popoverBridge] highlight listener threw', err)
+    }
+  }
+}
+
+export function subscribeHighlight(listener: (next: number) => void): () => void {
+  highlightListeners.add(listener)
+  return () => {
+    highlightListeners.delete(listener)
+  }
+}
+
 // Test-only escape hatch: the bridge is a module-level singleton so the
 // .ts production code shares one instance with the React popover. Tests
 // reset it between cases via this hook; the export is non-underscored
@@ -202,4 +252,6 @@ export function clear(): boolean {
 export function __resetForTests(): void {
   currentState = null
   listeners.clear()
+  highlightIndex = -1
+  highlightListeners.clear()
 }
