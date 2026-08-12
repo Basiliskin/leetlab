@@ -4,7 +4,7 @@ import { Annotation, EditorState, StateEffect } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { Diagnostic, linter, lintGutter } from "@codemirror/lint";
-import { javascript, javascriptLanguage, scopeCompletionSource } from "@codemirror/lang-javascript";
+import { javascript } from "@codemirror/lang-javascript";
 import {
   autocompletion,
   closeBrackets,
@@ -20,7 +20,7 @@ import {
 } from "@codemirror/commands";
 import { useAppStore } from "../infrastructure/store";
 import { checkCode } from "../infrastructure/tsCheck";
-import { sandboxServiceCompletions } from "../infrastructure/serviceCompletions";
+import { editorCompletionSources } from "../infrastructure/editorCompletions";
 
 // Marks transactions dispatched by the editor itself (programmatic doc
 // replacement, language reconfiguration) so the update listener can tell
@@ -151,16 +151,10 @@ function extensionsFor(lang: "js" | "ts") {
   const language = javascript(lang === "ts" ? { typescript: true } : undefined);
   return [
     language,
-    javascriptLanguage.data.of({
-      autocomplete: scopeCompletionSource(globalThis),
-    }),
-    // Second autocomplete facet entry (deliberately a separate .of(), not an
-    // array: a language-data array is treated as a static completion list,
-    // not more sources), so typing `redis.` surfaces the sandbox service
-    // members without touching the scope-based completions above.
-    javascriptLanguage.data.of({
-      autocomplete: sandboxServiceCompletions,
-    }),
+    // The three autocomplete facet entries (scope, sandbox service, and the
+    // TS-only built-in type-aware source) live in editorCompletions.ts; each
+    // is a separate .of(), never an array.
+    ...editorCompletionSources(lang),
     autocompletion(),
     closeBrackets(),
     history(),
