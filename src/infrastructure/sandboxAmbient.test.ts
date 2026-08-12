@@ -21,6 +21,7 @@ import { SANDBOX_SERVICE_CONSTRUCTORS } from '../services/sandbox-bindings'
 import {
   AMBIENT_FILE_NAME,
   AMBIENT_TEXT,
+  DOM_AUGMENT_TEXT,
   SERVICE_TEXT_PATHS,
   buildAmbientText,
   buildServiceTexts,
@@ -86,8 +87,9 @@ describe('sandbox ambient declarations', () => {
       )
     }
     expect(AMBIENT_TEXT).not.toContain(': any')
+    // Handle lines plus the known DOM augmentation lines, nothing else.
     expect(AMBIENT_TEXT.split('\n').filter(Boolean)).toHaveLength(
-      HANDLES.length
+      HANDLES.length + DOM_AUGMENT_TEXT.split('\n').filter(Boolean).length
     )
   })
 
@@ -141,6 +143,24 @@ describe('sandbox ambient declarations', () => {
     expect(
       unknown.some((m) => m.includes("Cannot find name 'totallyUnknownSymbol'"))
     ).toBe(true)
+  })
+
+  it('merges ReadableStream async iteration so for-await needs no cast', async () => {
+    // TS 5.4.5's lib.dom.d.ts has no [Symbol.asyncIterator] on ReadableStream
+    // (it landed in 6.0); without the DOM_AUGMENT_TEXT merge this is TS2488.
+    const msgs = await messagesOf(`
+      const source = new ReadableStream<number>({
+        start(c) { c.enqueue(1); c.close(); },
+      });
+      const transform = new TransformStream<number, number>({
+        transform(chunk, controller) {
+          if (chunk > 0) controller.enqueue(chunk * 2);
+        },
+      });
+      const transformed = source.pipeThrough(transform);
+      for await (const value of transformed) { console.log(value); }
+    `)
+    expect(msgs.filter((m) => m.includes('[Symbol.asyncIterator]'))).toEqual([])
   })
 
   it('degrades to empty/inert output for degenerate builder inputs', () => {

@@ -2,7 +2,8 @@
 // 4, tscheck-ambient-declarations). tsCheck.ts's virtual language-service
 // host serves the synthetic declaration file below so TS-mode solution code
 // can reference `redis`, `pg`, `rabbitmq`, `kafka` and `queue` without false
-// "Cannot find name" diagnostics.
+// "Cannot find name" diagnostics. The file also carries DOM type-completeness
+// patches (DOM_AUGMENT_TEXT below) for API the pinned TS 5.4.5 lib lacks.
 //
 // The declarations point at the real types from the same aggregator module
 // the worker instantiates (`SandboxServices` in sandbox-bindings.ts) via
@@ -79,11 +80,29 @@ export function buildAmbientText(
 
 const HANDLE_NAMES = Object.keys(SANDBOX_SERVICE_CONSTRUCTORS)
 
-/** Ready-to-serve ambient text declaring all 5 service globals. */
-export const AMBIENT_TEXT = buildAmbientText(
-  HANDLE_NAMES,
-  './services/sandbox-bindings'
-)
+/**
+ * Type-completeness patch for the pinned TS 5.4.5 lib (tsCheck's LIB_BASE).
+ * 6.0's lib.dom.d.ts declares ReadableStream async-iterable (the "Window
+ * Async Iterable APIs" section: `[Symbol.asyncIterator]` + `values`); 5.4.5's
+ * does not, so `for await (const x of stream)` in solution code was a false
+ * TS2488. The 6.0 signature takes a `ReadableStreamIteratorOptions` arg and
+ * returns a `ReadableStreamAsyncIterator`, but neither type exists in 5.4.5,
+ * so the param is dropped and the return is the closest present type,
+ * `AsyncIterableIterator` (es2018, included via the es2021 lib). Merged with
+ * lib.dom's `ReadableStream<R = any>` via interface-declaration merging.
+ */
+export const DOM_AUGMENT_TEXT = `
+interface ReadableStream<R = any> {
+  [Symbol.asyncIterator](): AsyncIterableIterator<R>;
+}
+`
+
+/**
+ * Ready-to-serve ambient text: the 5 service globals typed from the
+ * aggregator, plus the DOM lib patches above.
+ */
+export const AMBIENT_TEXT =
+  buildAmbientText(HANDLE_NAMES, './services/sandbox-bindings') + DOM_AUGMENT_TEXT
 
 /** Ready-to-serve virtual service files for the language-service host. */
 export const SERVICE_TEXT_PATHS = buildServiceTexts()
