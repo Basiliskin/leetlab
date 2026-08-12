@@ -14,6 +14,15 @@
  * window.ts is absent (CDN cold start) or whenever the tsCheck call throws,
  * the source returns null - never [] and never a pending state - and the
  * editor simply falls back to the scope + service sources.
+ *
+ * Phase 3 (codeeditor-usage-templates) layers the template popover on
+ * top of the existing constructor and bare-identifier paths: a curated
+ * completion label (TransformStream, ReadableStream, WritableStream,
+ * AbortController) gets a function-form `apply` whose only effect is to
+ * open the `popoverBridge` with the accept-anchor payload. Accept is a
+ * pure no-op on the document; the popover (phase 4) decides what gets
+ * spliced. Non-curated entries keep their Phase 1 apply values byte-
+ * for-byte, so this layer is a strict superset.
  */
 
 import type {
@@ -23,8 +32,11 @@ import type {
   CompletionSource,
 } from '@codemirror/autocomplete'
 import { syntaxTree } from '@codemirror/language'
+import type { EditorView } from '@codemirror/view'
 import { SANDBOX_SERVICE_CONSTRUCTORS } from '../services/sandbox-bindings'
+import { open as openPopover } from './popoverBridge'
 import { getCompletions, type TsCompletionEntry } from './tsCheck'
+import { lookupUsageTemplates } from './usageTemplateInsert'
 
 /** The 5 sandbox handle names; these belong to the sync service source. */
 const SERVICE_HANDLES = new Set(Object.keys(SANDBOX_SERVICE_CONSTRUCTORS))
@@ -83,18 +95,84 @@ function typeOf(kind: string): Completion['type'] {
 }
 
 /**
- * Render a tsCheck entry as a CodeMirror completion. Constructor-signature
- * entries (Phase 1: detail starts `new Identifier(`) apply the empty string:
- * the identifier is already typed ahead of the open paren, so accepting must
- * not paste it again - the detail text carries the parameter info.
+ * Render a tsCheck entry as a CodeMirror completion. Three branches, in
+ * order of decreasing specificity:
+ *
+ *   1. Curated usage-template (Phase 3, codeeditor-usage-templates): the
+ *      label is in `USAGE_TEMPLATES`. Accept opens the template popover
+ *      via the bridge - no doc mutation in the apply hook, the picker
+ *      decides what gets spliced. Works for both constructor and bare
+ *      accept paths because Phase 1's range resolver handles both.
+ *   2. Constructor signature (Phase 1): `entry.detail` starts with
+ *      `new `. The identifier is already typed ahead of the open paren,
+ *      so accepting must not paste it again - empty-string apply is the
+ *      documented convention for this case (unchanged from Phase 1).
+ *   3. Otherwise: no `apply` field - CodeMirror's default behavior
+ *      replaces the partial with the label, matching the Phase 0 baseline.
+ *
+ * Non-curated entries keep this branch's exact `apply` value, byte-for-
+ * byte, so the regression surface is zero (tests pin the constructor-
+ * signature expectation explicitly).
  */
 function toCompletion(entry: TsCompletionEntry): Completion {
+  const templates = lookupUsageTemplates(entry.name)
+  if (templates && templates.length > 0) {
+    return {
+      label: entry.name,
+      type: typeOf(entry.kind),
+      detail: entry.detail,
+      apply: buildUsageTemplateApply(entry.name),
+    }
+  }
   const ctor = entry.detail?.startsWith('new ')
   return {
     label: entry.name,
     type: typeOf(entry.kind),
     detail: entry.detail,
     ...(ctor ? { apply: '' } : {}),
+  }
+}
+
+/**
+ * Build the function-form `apply` callback a curated completion item
+ * carries. The callback opens the popover bridge at the accept site with
+ * the resolved range, the current document text, and viewport coords
+ * derived from the editor view - and intentionally returns without
+ * dispatching, so the document is not mutated by accept itself. The
+ * popover (phase 4) drives every later edit.
+ *
+ * Exported so the unit tests can drive it directly with a stub view,
+ * sidestepping the brittleness of a real CoordinateEvent / DOM. The
+ * callback is a plain `(view, completion, from, to) => void`, matching
+ * CodeMirror's documented function-form `apply` signature.
+ *
+ * Three out-conditions fall through to no-op so a curio completion never
+ * crashes the editor:
+ *   - Empty / missing template list (defensive; data invariant forbids
+ *     but we don't trust data we don't own).
+ *   - `coordsAtPos` returns null (view not measured yet, off-screen,
+ *     zero-sized editor, etc.). The popover positions itself later in
+ *     Phase 4 via the bridge's `update`; we still open.
+ *   - Both `from` and `to` coordinates are null. The popover without
+ *     coords is unusable, so we skip - the user can accept again.
+ */
+export function buildUsageTemplateApply(
+  label: string,
+): (view: EditorView, completion: Completion, from: number, to: number) => void {
+  return (view, _completion, from, to) => {
+    const templates = lookupUsageTemplates(label)
+    if (!templates || templates.length === 0) return
+    const anchor = view.coordsAtPos(from) ?? view.coordsAtPos(to)
+    if (!anchor) return
+    openPopover({
+      templates,
+      label,
+      coords: { x: anchor.left, y: anchor.bottom },
+      source: view.state.doc.toString(),
+      pos: to,
+      from,
+      to,
+    })
   }
 }
 
