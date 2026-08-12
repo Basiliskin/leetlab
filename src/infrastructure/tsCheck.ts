@@ -69,7 +69,9 @@ export interface TsDiag {
 let service: import('typescript').LanguageService | null = null
 let version = 0
 let currentCode = ""
-let chain: Promise<TsDiag[]> = Promise.resolve([])
+// Serializes host mutations (currentCode/version bump + lib seeding) across
+// checkCode and getCompletions so interleaved calls never corrupt each other.
+let chain: Promise<unknown> = Promise.resolve()
 
 function makeHost(ts: typeof import('typescript')) {
   return {
@@ -143,6 +145,61 @@ export function checkCode(code: string, ts: typeof import('typescript')): Promis
     }
     return out
   }
-  chain = chain.then(run, run)
-  return chain
+  const result = chain.then(run, run)
+  chain = result
+  return result
+}
+
+export interface TsCompletionEntry {
+  name: string
+  kind: string
+  kindModifiers: string
+  sortText: string
+  /** Rendered from getCompletionEntryDetails displayParts, e.g. a signature. */
+  detail?: string
+}
+
+// Type-aware completion for the TS editor (roadmap phase tscheck-completion-
+// entrypoint). Reuses checkCode's exact live-document machinery - bump the
+// same currentCode/version, warm the same lib seed - so the LanguageService
+// resolves types against the doc the caller just passed, never a stale one.
+export function getCompletions(
+  code: string,
+  pos: number,
+  ts: typeof import('typescript'),
+): Promise<TsCompletionEntry[]> {
+  const run = async (): Promise<TsCompletionEntry[]> => {
+    version++
+    currentCode = code
+    await ensureLibs(["lib.es2021.d.ts", "lib.dom.d.ts"])
+    if (!service) service = ts.createLanguageService(makeHost(ts))
+    const svc = service
+
+    const info = svc.getCompletionsAtPosition("input.ts", pos, undefined)
+    if (!info) return []
+
+    return info.entries.map((entry) => {
+      const details = svc.getCompletionEntryDetails(
+        "input.ts",
+        pos,
+        entry.name,
+        undefined,
+        entry.source,
+        undefined,
+        entry.data,
+      )
+      const rendered =
+        details?.displayParts.map((p) => p.text).join("") ?? ""
+      return {
+        name: entry.name,
+        kind: entry.kind,
+        kindModifiers: entry.kindModifiers ?? "",
+        sortText: entry.sortText,
+        detail: rendered || undefined,
+      }
+    })
+  }
+  const result = chain.then(run, run)
+  chain = result
+  return result
 }
