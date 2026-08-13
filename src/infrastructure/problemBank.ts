@@ -853,5 +853,89 @@ export const PROBLEM_BANK: Problem[] = [
     "Build the source, then `new WritableStream({ write(chunk, controller) { ... } })`: for a negative chunk call controller.error(...) and return without recording anything; otherwise push chunk*chunk into a results array declared outside the sink. `await` the pipeTo call inside a try/catch (the rejection is expected once a negative number appears) and return whatever the sink had already collected before the error."
   ],
   desc:`<p>Implement <code>squareUntilError(nums)</code>: pipe a <code>ReadableStream</code> over <code>nums</code> into a <code>WritableStream</code> sink via <code>readable.pipeTo(writable)</code>. The sink squares every non-negative value it receives and collects it — but the moment it receives a <strong>negative</strong> value, it must error the stream instead of processing it, and no value after that point should ever reach the sink.</p><p>Return everything the sink collected before the stream errored (or the full squared array if no negative value ever appears).</p><p class="note">Judge protocol: <code>pipeTo()</code> rejects when the sink errors — that rejection is expected, not a bug; catch it and return the partial results.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,-2,3]</div><div><b>Output:</b>[1]</div><div class="exp">1 is squared and collected; -2 triggers the error before it's recorded; 3 is never even delivered to the sink.</div></div><div class="ex"><div><b>Input:</b>nums = [-5,1]</div><div><b>Output:</b>[]</div><div class="exp">The very first value is negative, so nothing is ever collected.</div></div><h4>Constraints</h4><ul><li>0 ≤ nums.length ≤ 1000</li><li>-10<sup>4</sup> ≤ nums[i] ≤ 10<sup>4</sup></li></ul>`
+},
+{
+  slug:'rolling-window-mean', num:8028, title:'Sliding-Window Rolling Mean', difficulty:'Easy', tags:['Async Generator','Streaming','Sliding Window'],
+  fnName:'rollingMean', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} stream\n * @param {number} k\n * @return {Promise<number[]>}\n */\nasync function rollingMean(stream, k) {\n  \n}\n",
+    ts:"async function rollingMean(stream: number[], k: number): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,2,3,4,5],3], out:[2,3,4]},
+    {in:[[10],1], out:[10]},
+    {in:[[5,5,5,5],2], out:[5,5,5]},
+    {in:[[1],5], out:[]},
+    {in:[[-1,-2,-3,-4],2], out:[-1.5,-2.5,-3.5]},
+    {in:[[0,0,0],3], out:[0]}
+  ],
+  hints:[
+    "The naive solution re-slices the last k items on every step — that's O(k) per item, O(n·k) overall, and re-allocates an array per output. Streaming a rolling window is supposed to keep working memory bounded, so do the math a different way.",
+    "Keep two pieces of state across iterations: the running sum and a queue of the most recent k items. On each new item: if the queue is already k long, subtract its front from the sum and shift it out before adding the new one. Once the queue holds k items, yield sum / k — never before (a partial average is a different problem)."
+  ],
+  desc:`<p>Implement <code>rollingMean(stream, k)</code>: consume the numbers in <code>stream</code> as if from an async source, and emit the <strong>rolling mean of the last <code>k</code> items</strong> — one output per item, but only <em>after</em> the window has had a chance to fill. The output length is therefore <code>stream.length − k + 1</code> (or <code>0</code> if the stream is shorter than <code>k</code>).</p><p>The point of the exercise is the working-set discipline: a naive <code>stream.slice(i-k+1, i+1).reduce(...)</code> re-allocates and re-sums on every step. The streaming version keeps a fixed-size queue plus a running sum — <strong>O(1) state and O(1) work per item</strong>, regardless of <code>k</code>.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of means (with the natural <code>Number</code> divisions producing <code>2.5</code>-style floats where appropriate).</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>stream = [1,2,3,4,5], k = 3</div><div><b>Output:</b>[2,3,4]</div><div class="exp">Windows of size 3: [1,2,3]=2, [2,3,4]=3, [3,4,5]=4.</div></div><div class="ex"><div><b>Input:</b>stream = [1], k = 5</div><div><b>Output:</b>[]</div><div class="exp">Stream shorter than the window — nothing has been seen enough times to form a mean yet.</div></div><h4>Constraints</h4><ul><li>0 ≤ stream.length ≤ 10<sup>4</sup></li><li>1 ≤ k ≤ 1000</li><li>Values fit in a regular JS number</li></ul>`
+},
+{
+  slug:'stream-distinct', num:8029, title:'Stream Distinct — First-Occurrence Dedup', difficulty:'Easy', tags:['Async Generator','Streaming','Set'],
+  fnName:'distinct', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} stream\n * @return {Promise<number[]>}\n */\nasync function distinct(stream) {\n  \n}\n",
+    ts:"async function distinct(stream: number[]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,2,2,3,1,4,3]], out:[1,2,3,4]},
+    {in:[[]], out:[]},
+    {in:[[5,5,5]], out:[5]},
+    {in:[[1,2,3]], out:[1,2,3]},
+    {in:[[1,2,1,2,1,2]], out:[1,2]},
+    {in:[[-1,-2,-1,-2]], out:[-1,-2]}
+  ],
+  hints:[
+    "The output is 'first occurrence of each value, in input order' — same answer as the streaming version of `Array.from(new Set(stream))`, but framed as an async pipeline so the discipline is explicit.",
+    "Walk the stream with a for-await loop and keep a `Set` of values you've already yielded. On each item: if it's NOT in the set, add it AND push/yield it; if it is, skip. The Set is exactly the right shape — both membership check and insertion-order iteration are O(1), so the whole pass is O(n) and the working set is at most the size of the output."
+  ],
+  desc:`<p>Implement <code>distinct(stream)</code>: consume the numbers in <code>stream</code> and yield each one the <strong>first time</strong> it appears, skipping every subsequent repeat. The order of the output is the order of first encounters in the input — not sorted order.</p><p>This is the canonical streaming dedupe — the version of <code>[...new Set(stream)]</code> that stays explicit about its one-pass, O(1)-membership-check discipline. The Set itself never grows larger than the output.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of the distinct values in encounter order.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>stream = [1,2,2,3,1,4,3]</div><div><b>Output:</b>[1,2,3,4]</div><div class="exp">1, 2 are new; the second 2 is skipped; 3 is new; the second 1 is skipped; 4 is new; the second 3 is skipped.</div></div><div class="ex"><div><b>Input:</b>stream = [1,2,1,2,1,2]</div><div><b>Output:</b>[1,2]</div><div class="exp">Only the first two values ever survive; everything after is a repeat.</div></div><h4>Constraints</h4><ul><li>0 ≤ stream.length ≤ 10<sup>4</sup></li></ul>`
+},
+{
+  slug:'pagination-flatten', num:8030, title:'Pagination Flatten — Empty-Page Terminator', difficulty:'Medium', tags:['Async Generator','Streaming','Pagination'],
+  fnName:'flattenPagination', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[][]} pages\n * @return {Promise<number[]>}\n */\nasync function flattenPagination(pages) {\n  \n}\n",
+    ts:"async function flattenPagination(pages: number[][]): Promise<number[]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[[1,2],[3,4],[]]], out:[1,2,3,4]},
+    {in:[[[1,2,3]]], out:[1,2,3]},
+    {in:[[[]]], out:[]},
+    {in:[[[1],[2],[],[3,4]]], out:[1,2]},
+    {in:[[[1,2],[3]]], out:[1,2,3]},
+    {in:[[[1,2,3],[],[4]]], out:[1,2,3]}
+  ],
+  hints:[
+    "A paginated API has no `Content-Length` and no `Last-Page` header — the only end-of-feed signal is the server returning an empty page. That's why the discipline 'stop on the first empty page, even if your local buffer still has more pages to read' is a real streaming pattern, not a contrived one.",
+    "Iterate `pages` in order with a simple for-of loop. For each page: if it's empty, `break` out of the loop immediately (do not append it to the result, and do not keep reading past it); otherwise push every item of that page into the result in order. End-of-array is also an end-of-feed — the natural loop termination handles it."
+  ],
+  desc:`<p>Implement <code>flattenPagination(pages)</code>: treat <code>pages</code> as the sequence of responses a paginated API hands back over time, and return every item from every non-empty page as a single flat array.</p><p>The <strong>end-of-feed signal</strong> is an empty page (<code>[]</code>) — the moment you see one, stop reading. This is the exact discipline used when paging through a REST cursor: the server stops responding with data, so you stop asking. A trailing empty page (or end of array) both mean "nothing more to do".</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of all items from non-terminator pages, in order.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>pages = [[1,2],[3,4],[]]</div><div><b>Output:</b>[1,2,3,4]</div><div class="exp">[1,2] and [3,4] are real; the trailing [] is the terminator and contributes nothing.</div></div><div class="ex"><div><b>Input:</b>pages = [[1],[2],[],[3,4]]</div><div><b>Output:</b>[1,2]</div><div class="exp">[3,4] is sitting right there in the buffer — but the empty page at index 2 already terminated the feed, so it's intentionally never read.</div></div><h4>Constraints</h4><ul><li>0 ≤ pages.length ≤ 1000</li><li>Each page is itself a number array (possibly empty)</li><li>Total items across all pages ≤ 10<sup>4</sup></li></ul>`
+},
+{
+  slug:'stream-chunk-by-threshold', num:8031, title:'Stream Chunk Until Sum Threshold', difficulty:'Medium', tags:['Async Generator','Streaming','Accumulator'],
+  fnName:'chunkBySum', mode:'fn',
+  starter:{
+    js:"/**\n * @param {number[]} stream\n * @param {number} threshold\n * @return {Promise<number[][]>}\n */\nasync function chunkBySum(stream, threshold) {\n  \n}\n",
+    ts:"async function chunkBySum(stream: number[], threshold: number): Promise<number[][]> {\n  \n}\n"
+  },
+  tests:[
+    {in:[[1,2,3,4,5],5], out:[[1,2,3],[4,5]]},
+    {in:[[1,1,1,1],3], out:[[1,1,1],[1]]},
+    {in:[[5],3], out:[[5]]},
+    {in:[[1,2],10], out:[[1,2]]},
+    {in:[[],5], out:[]},
+    {in:[[10,1,1],5], out:[[10],[1,1]]}
+  ],
+  hints:[
+    "This is the inverse of the backpressure pattern (problem 8015). There, a slow downstream gated how much the fast upstream could push; here a slow downstream (think: a database bulk insert, or a network flush) needs batches large enough that per-batch overhead amortizes — so the upstream accumulates until the batch is 'big enough'.",
+    "Keep two pieces of state: the current chunk array and its running sum. On each item: push it into the chunk and add it to the sum. If sum is now ≥ threshold, append the chunk to the output and reset both. When the stream ends, if the accumulator has anything in it, flush it as a final (partial) chunk — don't append an empty chunk for a no-op end-of-stream flush."
+  ],
+  desc:`<p>Implement <code>chunkBySum(stream, threshold)</code>: consume the numbers in <code>stream</code> and group them into contiguous chunks, where each chunk is the smallest contiguous run whose sum is <code>≥ threshold</code>. A final partial chunk — items left over when the stream ends without crossing the threshold — is also emitted as its own chunk.</p><p>This is the streaming pattern behind batched DB writes, log shippers that flush on size, and any pipeline where per-batch overhead dominates: you buffer until the batch is worth the round trip, then flush and start a new one.</p><p class="note">Judge protocol: your <code>async function</code>'s resolved value is compared directly, so <code>return</code> a plain array of plain arrays (chunks). An empty input must produce <code>[]</code>, never <code>[[]]</code>.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>stream = [1,2,3,4,5], threshold = 5</div><div><b>Output:</b>[[1,2,3],[4,5]]</div><div class="exp">1+2+3=6 ≥ 5, so the first chunk flushes. Then 4+5=9 ≥ 5, so the second flushes. Nothing left over.</div></div><div class="ex"><div><b>Input:</b>stream = [1,1,1,1], threshold = 3</div><div><b>Output:</b>[[1,1,1],[1]]</div><div class="exp">1+1+1=3 ≥ 3 — first chunk flushes. Then a single 1 (sum 1) is left when the stream ends; partial chunks are flushed as-is.</div></div><h4>Constraints</h4><ul><li>0 ≤ stream.length ≤ 1000</li><li>1 ≤ threshold ≤ 10<sup>6</sup></li><li>All items non-negative</li></ul>`
 }
 ];
