@@ -501,6 +501,10 @@
     .cpill{min-height:44px}
     .drawer-tools .ghost-btn{min-height:44px}
     .compile-banner{overflow-wrap:anywhere}
+    /* problem-description content: break long monospace tokens (URLs, long
+       identifiers) so no .ex/code/paragraph line forces horizontal scroll
+       inside the description at phone widths; wrapping, never clipping */
+    .desc-body .ex,.desc-body code,.desc-body p,.desc-body ul li{overflow-wrap:anywhere;word-break:break-word}
     .editor-body{flex:1 1 auto;height:auto;max-height:none;min-height:0}
     .editor-head{flex-wrap:wrap}
     .editor-foot .btn{min-height:44px}
