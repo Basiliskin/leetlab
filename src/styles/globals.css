@@ -469,3 +469,16 @@
     .divider{display:none}
     body{overflow:auto}
   }
+
+  /* ---------- mobile phone (<=480px): column stack, zero horizontal overflow ---------- */
+  @media (max-width:480px){
+    .shell{flex-direction:column;overflow-y:auto}
+    .sidebar{flex:0 0 auto;min-width:0}
+    .workspace{flex-direction:column;min-height:0;min-width:0}
+    .desc-pane{flex:0 0 auto;min-width:0}
+    .divider{display:none}
+    .editor-pane{flex:1 1 auto;min-width:0}
+    .drawer{flex:0 1 auto;min-width:0}
+    .editor-body{flex:1 1 auto;height:auto;max-height:none;min-height:0}
+    .editor-head{flex-wrap:wrap}
+  }
