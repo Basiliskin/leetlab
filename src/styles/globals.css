@@ -116,7 +116,7 @@
     display:flex;flex-direction:column;min-height:0;overflow:hidden;
   }
   .desc-pane{flex:0 0 44%;min-width:320px;animation:fadeUp .5s .12s ease both}
-  .editor-pane{flex:1;min-width:380px;animation:fadeUp .5s .2s ease both}
+  .editor-pane{flex:1;min-width:380px;animation:fadeUp .5s .2s ease backwards}
   .divider{flex:0 0 12px;cursor:col-resize;position:relative;display:grid;place-items:center}
   .divider::before{content:"";width:3px;height:44px;border-radius:3px;background:var(--line);transition:background .2s,height .2s}
   .divider:hover::before,.divider.drag::before{background:var(--amber);height:70px}
@@ -493,4 +493,8 @@
     .editor-head{flex-wrap:wrap}
     .editor-foot .btn{min-height:44px}
     .kbd-hint{display:none}
+    /* on-screen keyboard bar: while the OS keyboard occludes the visual
+       viewport (visualViewport-infra sets the keyboard-open class + offset),
+       the editor-foot leaves flow and pins above the keyboard. */
+    .keyboard-open .editor-foot{position:fixed;left:0;right:0;bottom:var(--keyboard-offset,0px);z-index:20}
   }

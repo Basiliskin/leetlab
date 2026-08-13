@@ -50,6 +50,10 @@ export function initVisualViewport(): (() => void) | null {
     const keyboardOffset = Math.max(0, window.innerHeight - vv.height);
     docEl.style.setProperty(VISUAL_VIEWPORT_HEIGHT_VAR, `${vv.height}px`);
     docEl.style.setProperty(KEYBOARD_OFFSET_VAR, `${keyboardOffset}px`);
+    // Toggle a class so CSS can switch the editor-foot into the fixed
+    // "on-screen keyboard bar" only while the keyboard actually occludes
+    // (when closed it stays in-flow and never floats over the drawer).
+    docEl.classList.toggle("keyboard-open", keyboardOffset > 0);
   };
 
   // Both events matter: resize fires when the keyboard opens (height drops),

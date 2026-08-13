@@ -58,11 +58,13 @@ class FakeVisualViewport extends EventTarget {
 interface BrowserStub {
   vv: FakeVisualViewport | undefined
   vars: Map<string, string>
+  classes: Set<string>
   win: { visualViewport?: FakeVisualViewport; innerHeight: number }
 }
 
 function stubBrowser(opts: { vv?: boolean; height?: number; innerHeight?: number }): BrowserStub {
   const vars = new Map<string, string>()
+  const classes = new Set<string>()
   const vv = opts.vv === false ? undefined : new FakeVisualViewport(opts.height ?? 700)
   const win = { visualViewport: vv, innerHeight: opts.innerHeight ?? 844 }
   Object.defineProperty(globalThis, 'window', { value: win, configurable: true, writable: true })
@@ -70,11 +72,23 @@ function stubBrowser(opts: { vv?: boolean; height?: number; innerHeight?: number
     value: {
       documentElement: {
         style: { setProperty: (name: string, value: string) => vars.set(name, value) },
+        classList: {
+          toggle: (name: string, force?: boolean) => {
+            if (force === undefined) {
+              if (classes.has(name)) classes.delete(name)
+              else classes.add(name)
+            } else if (force) {
+              classes.add(name)
+            } else {
+              classes.delete(name)
+            }
+          },
+        },
       },
     },
     configurable: true,
   })
-  return { vv, vars, win }
+  return { vv, vars, classes, win }
 }
 
 afterEach(() => {
@@ -84,7 +98,7 @@ afterEach(() => {
 })
 
 describe('visualViewport (keyboard-offset-reflects-visual-viewport)', () => {
-  it('publishes an initial visual-viewport height and zero keyboard offset on init', () => {
+  it('publishes an initial visual-viewport height and the computed keyboard offset on init', () => {
     const { vars } = stubBrowser({ height: 700 })
     initVisualViewport()
     expect(vars.get(VISUAL_VIEWPORT_HEIGHT_VAR)).toBe('700px')
@@ -146,6 +160,37 @@ describe('visualViewport (listener-lifecycle-idempotent)', () => {
   it('destroy is safe to call when never initialized', () => {
     stubBrowser({ height: 700 })
     expect(() => destroyVisualViewport()).not.toThrow()
+  })
+})
+
+describe('visualViewport (keyboard-open class for the on-screen bar)', () => {
+  it('toggles keyboard-open on :root only while the keyboard occludes', () => {
+    const { vv, classes } = stubBrowser({ height: 844, innerHeight: 844 }) // closed
+    initVisualViewport()
+    expect(classes.has('keyboard-open')).toBe(false)
+    vv!.height = 500 // keyboard opens
+    vv!.fire('resize')
+    expect(classes.has('keyboard-open')).toBe(true)
+    vv!.height = 844 // keyboard closes
+    vv!.fire('resize')
+    expect(classes.has('keyboard-open')).toBe(false)
+  })
+
+  it('open/close cycles are drift-free: offset and class return to the initial state', () => {
+    const { vv, vars, classes } = stubBrowser({ height: 844, innerHeight: 844 })
+    initVisualViewport()
+    for (let i = 0; i < 10; i++) {
+      vv!.height = 500
+      vv!.fire('resize') // open
+      vv!.height = 844
+      vv!.fire('resize') // close
+    }
+    expect(vars.get(KEYBOARD_OFFSET_VAR)).toBe('0px')
+    expect(classes.has('keyboard-open')).toBe(false)
+    vv!.height = 500
+    vv!.fire('resize')
+    expect(vars.get(KEYBOARD_OFFSET_VAR)).toBe('344px')
+    expect(classes.has('keyboard-open')).toBe(true)
   })
 })
 
