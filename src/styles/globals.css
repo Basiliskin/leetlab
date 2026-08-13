@@ -534,4 +534,26 @@
     .top-actions.open{display:flex}
     .top-actions .gen-btn{justify-content:flex-start;min-height:44px;width:100%}
     .menu-backdrop{display:block;position:fixed;inset:0;z-index:29;background:transparent}
+    /* ---------- touch-target pass: every interactive control >= 44px, with
+       >= 8px tap spacing, scoped to the phone breakpoint so desktop sizes are
+       untouched ---------- */
+    .chip{min-height:44px}
+    .chips{gap:8px}
+    .search input{min-height:44px}
+    .ptab{min-height:44px}
+    .pane-tabs{gap:8px}
+    .seg button{min-height:44px}
+    .btn-format{min-height:44px}
+    .ghost-btn{min-height:44px}
+    .rrow-h{min-height:44px}
+    details.hint summary{min-height:44px}
+    .prow-btn{min-height:44px}
+    .provider-actions{gap:8px}
+    .modal-x{min-width:44px;min-height:44px}
+    .form-row select,.form-row input{min-height:44px}
+    .btn-ghost,.btn-danger{min-height:44px}
+    .manage-link{display:inline-flex;align-items:center;min-height:44px;padding:0 6px}
+    .top-actions{gap:8px}
+    .case-pills{gap:8px}
+    .mobile-tabs{gap:8px}
   }
