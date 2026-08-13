@@ -1,12 +1,12 @@
 // Provider management modal (Phase 3 of
 // docs/roadmaps/llm-provider-crud-roadmap.md).
 //
-// User-facing create/edit/delete surface for the provider registry, reachable
-// from GenerateModal (the provider row's "Manage providers" link, or the empty
-// state's "Add an LLM provider" button). Lists every provider and offers a form
-// capturing name, protocol (anthropic | openai), a validated baseUrl (a path
-// prefix is fine — only query strings/fragments are rejected by the registry),
-// a single modelName, and an optional API key.
+// User-facing create/edit/delete surface for the provider registry, opened from
+// the Topbar 'Providers' entry as a top-level peer of the Generate modal (see
+// docs/roadmaps/separate-providers-from-generation-roadmap.md). Lists every
+// provider and offers a form capturing name, protocol (anthropic | openai), a
+// validated baseUrl (a path prefix is fine — only query strings/fragments are
+// rejected by the registry), a single modelName, and an optional API key.
 //
 // The provider id is derived from the name on create and frozen afterwards:
 // editing preserves the id (the registry's updateProvider(id, patch) signature
@@ -32,10 +32,6 @@ import {
 interface ManageProvidersModalProps {
   open: boolean
   onClose: () => void
-  /** Open straight into the create form (used by GenerateModal's empty state). */
-  initialMode?: 'list' | 'create'
-  /** Called with the new provider's id after a successful create. */
-  onCreated?: (id: string) => void
 }
 
 type Mode = 'list' | 'create' | 'edit'
@@ -85,10 +81,8 @@ function describeFormError(error: string): string {
 export function ManageProvidersModal({
   open,
   onClose,
-  initialMode = 'list',
-  onCreated,
 }: ManageProvidersModalProps) {
-  const [mode, setMode] = useState<Mode>(initialMode)
+  const [mode, setMode] = useState<Mode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
@@ -101,7 +95,7 @@ export function ManageProvidersModal({
   const [synced, setSynced] = useState({ open })
   if (synced.open !== open) {
     setSynced({ open })
-    setMode(initialMode)
+    setMode('list')
     setEditingId(null)
     setForm(EMPTY_FORM)
     setFormError(null)
@@ -209,7 +203,6 @@ export function ManageProvidersModal({
       }
       const key = form.apiKey.trim()
       if (key) setKey(result.provider.id, key)
-      onCreated?.(result.provider.id)
     } else if (mode === 'edit' && editingId) {
       // updateProvider(id, patch) preserves the id, keeping the API key (keyed
       // by id in leetlab.apiKeys) attached across a rename.
