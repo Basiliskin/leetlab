@@ -3,10 +3,12 @@ import { useAppStore, useMergedBank } from "../infrastructure/store";
 import { downloadFullState } from "../infrastructure/fullStateExport";
 import { GenerateModal } from "./GenerateModal";
 import { ImportModal } from "./ImportModal";
+import { ManageProvidersModal } from "./ManageProvidersModal";
 
 export function Topbar() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [providersOpen, setProvidersOpen] = useState(false);
   const bankLength = useMergedBank().length;
   const solvedCount = Object.values(
     useAppStore((s) => s.problems) || {},
@@ -48,6 +50,9 @@ export function Topbar() {
       <button className="gen-btn" onClick={() => setGenerateOpen(true)}>
         + Generate
       </button>
+      <button className="gen-btn" onClick={() => setProvidersOpen(true)}>
+        ⚙ Providers
+      </button>
       <button className="gen-btn" onClick={downloadFullState}>
         ⇩ Export
       </button>
@@ -55,6 +60,10 @@ export function Topbar() {
         ⇧ Import
       </button>
       <GenerateModal open={generateOpen} onClose={() => setGenerateOpen(false)} />
+      <ManageProvidersModal
+        open={providersOpen}
+        onClose={() => setProvidersOpen(false)}
+      />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
     </header>
   );

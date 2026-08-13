@@ -1,0 +1,322 @@
+{
+  "task": "I want to seprate providers management from generation flow",
+  "analysis": {
+    "objective": "Refactor the UI so provider management is a top-level peer of the generation flow: a Topbar 'Providers' entry opens ManageProvidersModal directly, and GenerateModal becomes pure generation (provider select + API key + generate) with no nested management UI or per-session model/baseUrl overrides.",
+    "successDefinition": "All five caller-supplied acceptance criteria are satisfied: Topbar has a dedicated 'Providers' entry that opens ManageProvidersModal; GenerateModal contains no ManageProvidersModal import, no nested-modal state, and no 'Manage providers' link/button; GenerateModal's form has no editable model-name or base-URL inputs (those come only from the selected provider definition); GenerateModal retains provider select, API key field, and the existing generate/result/error/review/accept flow; and providerRegistry.ts, apiKeys.ts, and providerAdapters.ts are byte-unchanged (UI composition only).",
+    "assumptions": [
+      "'Per-session model/baseUrl overrides' means the two editable inputs currently rendered by GenerateModal (model name and base URL), not some other hidden override surface — removing them entirely matches the user's intent that 'provider definition only' is the source of truth.",
+      "The Topbar already owns modal-open state (generateOpen, importOpen); adding a third peer flag (providersOpen) follows the existing pattern without introducing a global modal manager.",
+      "ManageProvidersModal is already self-contained and stateless w.r.t. GenerateModal's form state, so it can be opened independently without prop wiring changes.",
+      "API key handling in GenerateModal (read on submit, not persisted to provider definition) is preserved as-is per criteria 5; the separation work does not touch key lifecycle.",
+      "Provider definitions in localStorage remain the single source of truth for model and base URL at generation time — the form just stops asking the user to retype them.",
+      "The app is 100% client-side, so 'separation' is purely a UI/state-ownership concern; no backend or auth surface is touched."
+    ],
+    "risks": [
+      "Criteria 3 (removing editable model/baseUrl inputs from GenerateModal) is a deliberate UX regression for any user who depended on overriding a saved provider — this is the user's stated intent but worth flagging as a behavioral change visible to end users.",
+      "If the Topbar reuses a single modal-slot pattern or there is an existing modal stack, adding providersOpen as a sibling of generateOpen/importOpen could introduce state-coupling bugs (e.g., opening Providers while Generate is open) — the analysis does not see a global modal manager, so the safest assumption is three independent flags, but this needs verification.",
+      "GenerateModal currently derives its initial provider from `manageIntent`/nested state; removing that path must be matched by a default provider selection (first registry entry or persisted last-used) so the form is never empty on open.",
+      "If providerRegistry.ts is consumed by GenerateModal in a way that depends on the now-removed override inputs (e.g., reading model/baseUrl from local form state instead of the registry entry), the refactor must rewire those reads or generation will silently send stale values.",
+      "Criteria 5 forbids touching apiKeys.ts, but the per-session API key field still lives in GenerateModal — if the key read path ever coupled to the removed override inputs, key submission could break; this needs explicit check.",
+      "The Topbar's button layout/label set ('+ Generate', '⇩ Export', '⇧ Import') is established; adding 'Providers' must not break the existing button row's responsive behavior or visual rhythm — purely a styling risk, but visible."
+    ],
+    "outOfScope": [
+      "Modifying providerRegistry.ts, apiKeys.ts, or providerAdapters.ts — criteria 5 freezes these modules and only UI composition changes.",
+      "Changing the wire-format adapters or how providers are defined at the data level — the registry shape stays the same.",
+      "Introducing a global modal manager or router-based modal stack — three independent Topbar-owned flags is sufficient and avoids speculative architecture.",
+      "Adding provider-level features (default model selection per provider, key rotation, import/export of provider sets) — the separation is a UI move, not a feature expansion.",
+      "Migration of existing localStorage data — provider definitions and keys stay in their existing keys (`leetlab.providers`, `leetlab.apiKeys`) and existing data continues to load.",
+      "Backend, auth, or persistence-layer changes — the app is client-side and the registry already persists via localStorage.",
+      "Tests for the registry/adapters (criteria 5 unchanged scope) — if tests exist they remain valid; new UI tests for Topbar/GenerateModal composition are a separate, optional concern.",
+      "Adding documentation/marketing for the new Topbar entry — out of scope unless explicitly requested."
+    ],
+    "domainShape": "technical",
+    "domainShapeReason": "The task is a UI composition refactor — moving modal ownership between React components and stripping form fields — with no domain entities, rules, or workflows modeled; it is machinery (component state, modal orchestration), not a business domain.",
+    "ubiquitousLanguage": [
+      {"term": "Providers", "meaning": "Top-level peer concept in the UI representing the registry of LLM provider definitions (model + base URL + adapters) that the user manages independently of any single generation session."},
+      {"term": "Generation flow", "meaning": "The end-to-end act of producing a problem from a chosen provider using a (possibly per-session) API key, including the result/error/review/accept steps inside GenerateModal."},
+      {"term": "ManageProvidersModal", "meaning": "The existing self-contained CRUD modal that lists, creates, updates, and deletes provider definitions in the registry; the sole entry point for provider management after this refactor."},
+      {"term": "GenerateModal", "meaning": "The existing modal for the generation flow; after this refactor it is pure generation with provider select + API key + generate/result/review/accept and no nested management UI."},
+      {"term": "Provider definition", "meaning": "The registry-stored record (name, model, base URL, adapter) that becomes the single source of truth for model and base URL at generation time, replacing per-session overrides."},
+      {"term": "Per-session overrides", "meaning": "The currently editable model-name and base-URL inputs inside GenerateModal that this refactor removes in favor of always reading from the selected provider definition."},
+      {"term": "Topbar", "meaning": "The app's top navigation bar that owns the open/close flags for top-level modals (Generate, Providers, Export, Import) and from which Providers is launched as a peer entry."},
+      {"term": "Peer separation", "meaning": "The architectural relationship where Providers and Generate are siblings in the Topbar with independent modal state, replacing the prior nested-modal relationship inside GenerateModal."}
+    ]
+  },
+  "discoveryFindings": [
+    {
+      "area": "Test surface / GenerateModal & Topbar coupling",
+      "finding": "No test file imports from GenerateModal, Topbar, or ManageProvidersModal. There are zero .test.tsx files in the project (the only .test.tsx is src/components/CodeEditor.test.ts which is misnamed and tests code completion wiring, not the editor). Every existing test is infrastructure-level and runs in a Node environment with a localStorage shim.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/CodeEditor.test.ts",
+      "implication": "No existing tests break when GenerateModal's form fields and 'Manage providers' link are removed, and there is no precedent or test harness for asserting on the new Topbar 'Providers' button or modal. The plan does not need a 'update existing tests' phase."
+    },
+    {
+      "area": "Topbar CSS / styling hints",
+      "finding": "All three existing Topbar entries (Generate, Export, Import) share the same `.gen-btn` class defined in globals.css. The topbar layout is `display:flex; gap:16px`. The existing button row order is `Generate → Export → Import` (Topbar.tsx:48-56).",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/Topbar.tsx",
+      "implication": "The new 'Providers' entry should reuse `.gen-btn` for visual parity, sit as a peer button in the same flex row, and follow the existing emoji-prefix convention. Insertion position is the planner's choice; placing it adjacent to Generate keeps the action cluster cohesive."
+    },
+    {
+      "area": "Modal architecture / independent peers",
+      "finding": "There is no modal-stack manager, portal registry, or z-index orchestrator anywhere in src. Topbar.tsx is the sole owner of modal open/close state: `useState(false)` for `generateOpen` and `importOpen`, one per peer. Each modal portals itself to `document.body` independently. The Escape-key race between GenerateModal and ManageProvidersModal disappears automatically once GenerateModal no longer embeds it.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/Topbar.tsx",
+      "implication": "Adding 'Providers' is a literal copy-paste of the existing pattern: `const [providersOpen, setProvidersOpen] = useState(false)` plus a `.gen-btn` trigger plus `<ManageProvidersModal open={providersOpen} onClose={() => setProvidersOpen(false)} />`. No refactor of the modal-orchestration model is needed. The Escape coordination currently in GenerateModal.tsx:122-129 becomes deletable."
+    },
+    {
+      "area": "Cross-references to ManageProvidersModal and form fields",
+      "finding": "ManageProvidersModal is imported only from GenerateModal.tsx:30 and rendered via two createPortal blocks. The form field ids `gen-provider`, `gen-model`, `gen-baseurl`, `gen-key`, and the 'Manage providers…' link text are referenced ONLY in GenerateModal.tsx — no other component, no test, no doc uses them.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/GenerateModal.tsx",
+      "implication": "The blast radius is contained to one file (GenerateModal.tsx) for the removal, plus the new entry in Topbar.tsx. The two createPortal ManageProvidersModal blocks collapse into zero (both are part of the nested-modal surface that's being deleted)."
+    },
+    {
+      "area": "Provider data sourcing after removing per-session overrides",
+      "finding": "GenerateModal.tsx already calls `listProviders()` per render and derives `selected = providers.find(...) ?? providers[0] ?? null`. `runGeneration` already reads `selected.modelName` and `selected.baseUrl` as fallbacks. Calling `listProviders()` or `getProvider(selected.id)` inside the async `runGeneration` handler is semantically equivalent to the per-render call already happening.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/GenerateModal.tsx",
+      "implication": "The `model` and `baseUrl` `useState` slots can be deleted entirely. `runGeneration` should re-resolve the latest model/baseUrl from the registry at click time. This also fixes a latent bug: today, if a user edits a provider's model/baseUrl in ManageProvidersModal while GenerateModal is open, the current useState values are stale."
+    },
+    {
+      "area": "localStorage persistence in GenerateModal",
+      "finding": "GenerateModal does NOT write to localStorage. It only calls `setKey`/`clearKey` through the apiKeys module at request time and `getKey`/`redact` for UI readback. The only persistence touchpoint is via `setPendingGenerated`, which the store deliberately excludes from partialize. The `provider` useState is initialized once from `listProviders()[0]?.id`; it is NOT persisted across page reloads.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/GenerateModal.tsx",
+      "implication": "There is no persistence concern for this refactor. The `provider` selection-id useState should be kept (so the user's last pick sticks across modal opens within a session), but the `model` and `baseUrl` useState slots are pure duplicates of registry data and removing them loses no state."
+    },
+    {
+      "area": "Empty-state handling in GenerateModal",
+      "finding": "GenerateModal.tsx:168-227 renders a dedicated empty-state branch when the registry has zero providers, with its own 'Add an LLM provider' button that fires `setManageIntent('create')`. This branch is the ONLY remaining consumer of `manageIntent` state in GenerateModal. After the refactor the empty state could either be deleted entirely (an empty select + a disabled Generate button is sufficient), or kept as an informational message without a nested-modal opener.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/GenerateModal.tsx",
+      "implication": "The 'pure generation' success criterion requires deciding what GenerateModal does when the registry is empty. The current 'Add an LLM provider' button CANNOT survive as-is because it calls `setManageIntent('create')`."
+    },
+    {
+      "area": "Adjust-block complexity that simplifies on removal",
+      "finding": "GenerateModal.tsx:113-166 contains a non-trivial 'render-time resync' block that re-prefills `keyInput`, resyncs `model`/`baseUrl` to `selected.modelName`/`selected.baseUrl` when the provider changes, and clears stale duplicate feedback. Once `model`/`baseUrl` state is removed, this block shrinks: the `setModel`/`setBaseUrl` calls disappear, and `onProviderChange` collapses from a 3-field set to a 1-field set.",
+      "filePath": "/Users/dimitrykatz/workspace/leetlab/src/components/GenerateModal.tsx",
+      "implication": "Plan a follow-on simplification of the adjust-block in the same phase that removes the state — keeping a smaller block that still does the prefill + stale-clear work but no longer touches model/baseUrl state."
+    }
+  ],
+  "requiredMaterials": [],
+  "phases": [
+    {
+      "id": "topbar-add-providers-entry",
+      "order": 0,
+      "name": "Add Providers peer entry to Topbar",
+      "goal": "Introduce a Topbar-level 'Providers' button that opens ManageProvidersModal as a third peer modal alongside Generate and Import, without altering ManageProvidersModal itself.",
+      "boundedContext": "Topbar modal-orchestration peer (UI chrome / modal launcher)",
+      "layer": "interface",
+      "blastRadius": "small",
+      "inputs": [
+        "src/components/Topbar.tsx (existing generateOpen / importOpen peer pattern)",
+        "src/components/ManageProvidersModal.tsx (read-only consumer)",
+        "src/styles/globals.css .gen-btn class (reused verbatim)",
+        "Discovery finding: no modal-stack manager exists; per-render createPortal pattern is fine"
+      ],
+      "expectedResult": "Topbar renders a new '.gen-btn' labeled 'Providers' alongside Generate/Export/Import; clicking it sets a local `providersOpen` flag and renders <ManageProvidersModal open={providersOpen} onClose={...} /> as a third peer; existing generateOpen/importOpen flags untouched.",
+      "dependsOn": [],
+      "compensation": "Revert Topbar.tsx: remove the Providers button element, the `providersOpen` useState, and the ManageProvidersModal render block. No external effect (UI-only).",
+      "rubric": [
+        {
+          "id": "providers-entry-opens-managemodal",
+          "label": "Topbar 'Providers' entry opens ManageProvidersModal directly",
+          "ruleStatement": "Topbar.tsx renders a dedicated button labeled 'Providers' (separate from '+ Generate') that, when clicked, sets a local providers-open flag and mounts ManageProvidersModal at the Topbar level as a peer of Generate and Import.",
+          "passCriteria": [
+            "Topbar.tsx contains a <button> reusing the .gen-btn class whose visible text is exactly 'Providers'",
+            "Topbar.tsx declares a local useState flag (e.g. const [providersOpen, setProvidersOpen] = useState(false)) matching the existing generateOpen/importOpen pattern",
+            "Topbar.tsx renders <ManageProvidersModal open={providersOpen} onClose={...setProvidersOpen(false)...} /> in JSX at the same sibling level as the existing Generate/Import modal mounts",
+            "The button's onClick handler invokes setProvidersOpen(true) and does not depend on generateOpen or importOpen"
+          ],
+          "failureExamples": [
+            "The Providers entry is nested inside the '+ Generate' button or only appears when generateOpen is true",
+            "The button label is 'Manage providers' rendered inside GenerateModal rather than a top-level 'Providers' peer",
+            "providersOpen is hoisted into a shared parent/context/global store instead of being local to Topbar",
+            "ManageProvidersModal is rendered conditionally on generateOpen instead of on providersOpen"
+          ],
+          "minScore": 8
+        },
+        {
+          "id": "managemodal-not-inside-generate-modal",
+          "label": "ManageProvidersModal mounts at Topbar level, not inside GenerateModal",
+          "ruleStatement": "Per the phase scope and criterion 2, ManageProvidersModal is mounted as a JSX sibling of the Generate and Import peer modals inside Topbar.tsx, and is NOT imported or rendered inside GenerateModal.tsx.",
+          "passCriteria": [
+            "git diff --stat shows changes only to Topbar.tsx among src/components/*.tsx; GenerateModal.tsx and ImportModal.tsx are untouched",
+            "ManageProvidersModal's <ManageProvidersModal /> mount in Topbar.tsx sits at the same JSX indentation level as the existing generateOpen/importOpen modal mounts (peer, not child)",
+            "grepping the diff for 'import ManageProvidersModal' returns matches only in Topbar.tsx, never in GenerateModal.tsx",
+            "Topbar.tsx does not introduce any nested-modal state inside GenerateModal's component tree (no showProviders / nested open flags added elsewhere)"
+          ],
+          "failureExamples": [
+            "ManageProvidersModal is rendered as a child of GenerateModal's JSX",
+            "A nested showProviders useState is added inside GenerateModal to drive the sub-modal",
+            "Topbar imports ManageProvidersModal but never renders it, or only renders it inside the Generate-open branch",
+            "ManageProvidersModal is mounted via a portal that points into GenerateModal's DOM subtree"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "generate-modal-not-touched-this-phase",
+          "label": "GenerateModal.tsx is not modified in this phase (scope discipline)",
+          "ruleStatement": "This phase is scoped to Topbar only; GenerateModal.tsx receives zero edits. Removal of per-session model/base-URL inputs and any nested 'Manage providers' link belongs to a later phase, not this one.",
+          "passCriteria": [
+            "git diff -- src/components/GenerateModal.tsx returns no changes",
+            "No new import of ManageProvidersModal is added to GenerateModal.tsx",
+            "GenerateModal.tsx still contains the (currently present) per-session model-name and base-URL input fields — their removal is deferred to a later phase",
+            "GenerateModal.tsx's existing provider select, API key field, and generate/result/error/review/accept flow are byte-identical to the pre-phase version"
+          ],
+          "failureExamples": [
+            "GenerateModal.tsx is edited in this same phase to strip model/base-URL inputs (scope creep)",
+            "GenerateModal.tsx is edited to add a 'Manage providers' link/button that re-nests ManageProvidersModal",
+            "The provider select in GenerateModal.tsx is rewritten to bypass the registry module"
+          ],
+          "minScore": 7
+        },
+        {
+          "id": "registry-and-key-modules-byte-unchanged",
+          "label": "Provider registry, keys, and adapters modules are byte-unchanged (criterion 5)",
+          "ruleStatement": "Per criterion 5, only UI composition changes. providerRegistry.ts, apiKeys.ts, and providerAdapters.ts receive zero modifications; the new Providers button reads provider definitions through these existing modules, not via an inline copy.",
+          "passCriteria": [
+            "git diff -- src/infrastructure/providerRegistry.ts src/infrastructure/apiKeys.ts src/infrastructure/providerAdapters.ts returns no changes",
+            "No new exports, signature changes, or default-value edits appear in those three files",
+            "The new Providers button obtains provider definitions by calling the existing registry module rather than inlining a provider list into Topbar.tsx",
+            "Import statements added to Topbar.tsx reference providerRegistry / apiKeys / providerAdapters only for read access, not to mutate their exports"
+          ],
+          "failureExamples": [
+            "providerRegistry.ts is edited to add a per-session override field or to expose internals",
+            "apiKeys.ts is edited to add a UI-side cache or default key",
+            "providerAdapters.ts is edited to add a base-URL fallback that wasn't there before",
+            "A literal provider list is inlined into Topbar.tsx, duplicating providerRegistry's contents"
+          ],
+          "minScore": 8
+        }
+      ],
+      "healerHint": "If the Providers button renders but ManageProvidersModal opens inside the existing Generate modal instead of as a peer, remove any import of ManageProvidersModal from GenerateModal.tsx, add a local useState (e.g. providersOpen) to Topbar.tsx mirroring generateOpen/importOpen, and move the <ManageProvidersModal /> mount to the same JSX sibling level as the Generate and Import modals."
+    },
+    {
+      "id": "generatemodal-strip-management-and-overrides",
+      "order": 1,
+      "name": "Strip GenerateModal of nested management UI and per-session overrides",
+      "goal": "Reduce GenerateModal to pure generation (provider select + API key + generate/result/review/accept) by removing the nested ManageProvidersModal surface, the 'Manage providers' link, the per-session model/baseUrl inputs/state, and the Escape coordination that only existed to mediate the nested modal.",
+      "boundedContext": "GenerateModal generation form (per-session compose-step UI)",
+      "layer": "interface",
+      "blastRadius": "small",
+      "inputs": [
+        "src/components/GenerateModal.tsx (only file edited)",
+        "src/infrastructure/providerRegistry.ts (byte-unchanged; consumed for listProviders() and a getProvider(selectedId) read at submit time — getProvider already exists at line 157)",
+        "Discovery finding: form-field ids gen-model / gen-baseurl have no external consumers",
+        "Discovery finding: GenerateModal has no localStorage writes; removing useState loses no persisted state",
+        "Discovery finding: empty registry currently routes through setManageIntent('create') which is being deleted — empty registry is handled by an empty <select> + disabled Generate button"
+      ],
+      "expectedResult": "GenerateModal contains zero references to ManageProvidersModal (no import, no createPortal render, no manageIntent state); no 'Manage providers…' link/button; no model-name or base-URL <input> elements and no model/baseUrl useState; runGeneration resolves the latest model/baseUrl from the registry at click time; the adjust-block shrinks to prefill keyInput and clear stale duplicate feedback only; provider select + API key input + generate/result/error/review/accept flow preserved.",
+      "dependsOn": ["topbar-add-providers-entry"],
+      "compensation": "Revert GenerateModal.tsx to reintroduce the ManageProvidersModal import, the two createPortal renders, manageIntent state, the model/baseUrl useState slots, the two <input> elements, the 'Manage providers…' link, and the Escape coordination. No external effect (UI composition only; providerRegistry/apiKeys/providerAdapters untouched per criterion 5).",
+      "rubric": [
+        {
+          "id": "no-nested-management-ui",
+          "label": "No nested management UI inside GenerateModal",
+          "ruleStatement": "GenerateModal must contain zero references to ManageProvidersModal — no import, no createPortal render, no manageIntent useState, and no user-visible 'Manage providers…' link or button — because management is a top-level peer opened from the Topbar (caller criterion 2).",
+          "passCriteria": [
+            "src/components/GenerateModal.tsx contains zero matches for the identifier 'ManageProvidersModal' (no import, no JSX reference, no type import)",
+            "The file contains zero createPortal(...ManageProvidersModal...) or equivalent nested render of the management modal",
+            "No manageIntent useState declaration, setter, or read remains in the component",
+            "No link, anchor, or button with text containing 'Manage providers' is present in the rendered JSX",
+            "No keydown/Escape handler whose sole purpose was mediating the nested modal surface remains"
+          ],
+          "failureExamples": [
+            "File still imports ManageProvidersModal from '../components/ManageProvidersModal' even though it is no longer rendered",
+            "A 'Manage providers…' anchor tag remains in the form footer",
+            "An unused useState<'manageIntent'> declaration is left behind after removing its only consumer",
+            "A keydown listener still tries to close a nested modal that no longer exists"
+          ],
+          "minScore": 10
+        },
+        {
+          "id": "no-per-session-overrides",
+          "label": "No editable model-name or base-URL inputs in GenerateModal",
+          "ruleStatement": "GenerateModal's form must not expose editable model-name or base-URL fields; those values come exclusively from the selected provider definition in the registry at generation time (caller criterion 3).",
+          "passCriteria": [
+            "No <input> element with id, name, label, or placeholder indicating a model-name field exists in the JSX",
+            "No <input> element with id, name, label, or placeholder indicating a base-URL field exists in the JSX",
+            "No useState slot named model, modelName, baseUrl, or baseURL remains in the component body",
+            "No onChange handler in the form writes to a model or base-URL value",
+            "Apart from the provider <select>, the API key input, and the generate button, the form contains no other editable input"
+          ],
+          "failureExamples": [
+            "An <input id='gen-model'> element is left behind still wired to a deleted useState setter",
+            "A const [baseUrl, setBaseUrl] = useState('') line remains in the component body",
+            "A <label>Base URL</label><input ...> block still appears between the API key field and the generate button",
+            "A comment reads 'TODO: remove model input' but the input is still rendered"
+          ],
+          "minScore": 10
+        },
+        {
+          "id": "generation-flow-preserved",
+          "label": "Generation flow (provider select + API key + generate/result/review/accept) remains functional",
+          "ruleStatement": "GenerateModal continues to expose the provider select populated from the registry, the per-session API key input, the generate button, and the result/error/review/accept flow — generation is not collateral damage from the strip (caller criterion 4).",
+          "passCriteria": [
+            "A <select> is present and its options are populated from providerRegistry.listProviders()",
+            "An API key <input> remains, prefilled from the existing apiKeys semantics so users can enter a per-session key when none is saved",
+            "A generate button calls a submit handler that produces the result/error/review/accept sub-flow, which is still reachable after a successful generation",
+            "When the registry is empty, the <select> renders zero options and the generate button is disabled, with no fallback to a now-deleted setManageIntent('create') call",
+            "The adjust-block after an error/duplicate result still prefills the API key input and clears stale duplicate feedback without referencing removed state"
+          ],
+          "failureExamples": [
+            "The provider <select> was removed alongside the model/baseUrl inputs, leaving only the API key field",
+            "Generate button is wired to a handler that reads model/baseUrl from deleted local state and throws on click",
+            "Empty registry still routes through setManageIntent('create'), throwing at render because the setter no longer exists",
+            "Result/review/accept sub-tree is unreachable because its gating conditional lost a branch"
+          ],
+          "minScore": 10
+        },
+        {
+          "id": "registry-modules-byte-unchanged",
+          "label": "providerRegistry.ts, apiKeys.ts, providerAdapters.ts are byte-unchanged",
+          "ruleStatement": "This phase is UI composition only; the registry CRUD module, the API key store, and the provider adapters must remain byte-identical to their pre-phase state — no edits, no renames, no reformat (caller criterion 5, inverse-failure guard).",
+          "passCriteria": [
+            "git diff -- src/infrastructure/providerRegistry.ts produces no output",
+            "git diff -- src/infrastructure/apiKeys.ts produces no output",
+            "git diff -- src/infrastructure/providerAdapters.ts produces no output",
+            "No new exports, signature changes, internal renames, comments, or whitespace changes appear inside those three files",
+            "The only files changed by this phase in the working tree are inside src/components/ (GenerateModal.tsx); src/infrastructure/ is untouched"
+          ],
+          "failureExamples": [
+            "providerRegistry.ts gained a new getProvider(id) export that did not exist before this phase",
+            "apiKeys.ts was reformatted or had a comment changed, producing a non-empty whitespace or comment diff",
+            "providerAdapters.ts had an import re-ordered even though no functional change was intended",
+            "A new file appeared under src/infrastructure/ during this phase"
+          ],
+          "minScore": 10
+        },
+        {
+          "id": "registry-is-source-of-truth",
+          "label": "Provider definition is the single source of truth at generation time",
+          "ruleStatement": "At the moment the generate button is clicked, model and base URL must be resolved from the selected provider definition in the registry — not from per-session overrides, not from a stale snapshot — so edits made in ManageProvidersModal take effect on the next generation without any UI-side synchronization step.",
+          "passCriteria": [
+            "The submit handler invoked by the generate button resolves the provider by id via providerRegistry.getProvider(selectedId) (function already exists at providerRegistry.ts:157) inside the click handler, not from closed-over state captured during an earlier render",
+            "The handler reads model and baseUrl from that resolved provider object, not from any useState, useRef, or prop local to GenerateModal",
+            "No useEffect synchronizes registry changes into local model/baseUrl state, because no such local state exists",
+            "The provider <select>'s value is the selected provider id, not a model name or base-URL string"
+          ],
+          "failureExamples": [
+            "Submit handler destructures model and baseUrl from a local useState that was supposed to be deleted",
+            "An old useEffect(() => setModel(provider.model), [provider]) is left behind even though the inputs are gone",
+            "The select stores the model name in its value instead of the provider id, decoupling from the registry",
+            "The handler reads provider from a stale closure captured before the user switched providers in the modal"
+          ],
+          "minScore": 10
+        }
+      ],
+      "healerHint": "Most likely failure is leftover dead tokens from the old form (a ManageProvidersModal import, a 'Manage providers…' link, or model/baseUrl useState slots) — fastest fix is to grep GenerateModal.tsx for ManageProvidersModal, manageIntent, gen-model, gen-baseurl, setModel, setBaseUrl, and delete every match plus its now-orphaned JSX, then re-grep to confirm zero hits."
+    }
+  ],
+  "successCriteria": [
+    "Refactor task objective satisfied: provider management is a top-level peer of the generation flow (Topbar 'Providers' entry + pure-generation GenerateModal).",
+    "All five caller-supplied acceptance criteria are satisfied (per analysis.successDefinition).",
+    "topbar-add-providers-entry: Topbar renders a dedicated 'Providers' button that opens ManageProvidersModal as a third peer alongside Generate and Import, with no edits to GenerateModal.tsx.",
+    "generatemodal-strip-management-and-overrides: GenerateModal contains zero references to ManageProvidersModal, no 'Manage providers' link, no model/baseUrl inputs; runGeneration resolves model/baseUrl from the registry at click time; provider select + API key + generate/result/review/accept flow preserved; providerRegistry/apiKeys/providerAdapters byte-unchanged."
+  ],
+  "deferred": [
+    "Modifying providerRegistry.ts, apiKeys.ts, or providerAdapters.ts — criteria 5 freezes these modules and only UI composition changes.",
+    "Changing the wire-format adapters or how providers are defined at the data level — the registry shape stays the same.",
+    "Introducing a global modal manager or router-based modal stack — three independent Topbar-owned flags is sufficient and avoids speculative architecture.",
+    "Adding provider-level features (default model selection per provider, key rotation, import/export of provider sets) — the separation is a UI move, not a feature expansion.",
+    "Migration of existing localStorage data — provider definitions and keys stay in their existing keys.",
+    "Backend, auth, or persistence-layer changes — the app is client-side and the registry already persists via localStorage.",
+    "UI tests for the new Topbar 'Providers' entry (no existing UI-test harness for modals).",
+    "Adding documentation/marketing copy for the new Topbar entry."
+  ]
+}
