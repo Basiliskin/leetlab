@@ -42,6 +42,8 @@ export function initVisualViewport(): (() => void) | null {
 
   const docEl = document.documentElement;
 
+  let prevOffset = 0;
+
   const apply = () => {
     // Keyboard occlusion = layout-viewport height minus visual-viewport
     // height. Floored at 0: 0 when closed, grows as the keyboard covers the
@@ -53,7 +55,10 @@ export function initVisualViewport(): (() => void) | null {
     // Toggle a class so CSS can switch the editor-foot into the fixed
     // "on-screen keyboard bar" only while the keyboard actually occludes
     // (when closed it stays in-flow and never floats over the drawer).
+    const keyboardOpened = prevOffset === 0 && keyboardOffset > 0;
     docEl.classList.toggle("keyboard-open", keyboardOffset > 0);
+    if (keyboardOpened) revealFocusedElement();
+    prevOffset = keyboardOffset;
   };
 
   // Both events matter: resize fires when the keyboard opens (height drops),
@@ -72,4 +77,24 @@ export function initVisualViewport(): (() => void) | null {
 
 export function destroyVisualViewport(): void {
   if (wiredCleanup) wiredCleanup();
+}
+
+// When the OS keyboard opens it can cover the focused field (e.g. a drawer
+// test-case textarea). The browser usually auto-scrolls the focused element
+// into view, but with nested scroll containers that can fail, so on the
+// open transition we explicitly bring an editable active element back into
+// view within its nearest scroll container.
+function revealFocusedElement(): void {
+  const el = document.activeElement;
+  if (!el) return;
+  const host = el as HTMLElement;
+  if (typeof host.scrollIntoView !== "function") return;
+  const isEditable =
+    host.isContentEditable ||
+    (typeof HTMLTextAreaElement !== "undefined" &&
+      el instanceof HTMLTextAreaElement) ||
+    (typeof HTMLInputElement !== "undefined" && el instanceof HTMLInputElement) ||
+    (typeof HTMLSelectElement !== "undefined" &&
+      el instanceof HTMLSelectElement);
+  if (isEditable) host.scrollIntoView({ block: "nearest" });
 }

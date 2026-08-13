@@ -488,7 +488,14 @@
     .workspace.desc-open .desc-pane{display:flex}
     .divider{display:none}
     .editor-pane{flex:1 1 auto;min-width:0}
-    .drawer{flex:0 1 auto;min-width:0}
+    /* drawer: fluid width (never the desktop 238px basis), capped height so
+       the code editor keeps the majority of the solve surface; long
+       result/console output wraps inside the pane. */
+    .drawer{flex:0 1 auto;min-width:0;max-height:45%}
+    .drawer .ptab{min-height:44px;padding:12px 14px}
+    .cpill{min-height:44px}
+    .drawer-tools .ghost-btn{min-height:44px}
+    .compile-banner{overflow-wrap:anywhere}
     .editor-body{flex:1 1 auto;height:auto;max-height:none;min-height:0}
     .editor-head{flex-wrap:wrap}
     .editor-foot .btn{min-height:44px}

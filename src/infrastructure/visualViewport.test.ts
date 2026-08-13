@@ -15,7 +15,7 @@
 // The repo has no DOM test environment (no jsdom/happy-dom), so the handful of
 // browser globals the module touches are stubbed via defineProperty.
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   initVisualViewport,
   destroyVisualViewport,
@@ -59,6 +59,13 @@ interface BrowserStub {
   vv: FakeVisualViewport | undefined
   vars: Map<string, string>
   classes: Set<string>
+  doc: {
+    activeElement: unknown
+    documentElement: {
+      style: { setProperty: (name: string, value: string) => void }
+      classList: { toggle: (name: string, force?: boolean) => void }
+    }
+  }
   win: { visualViewport?: FakeVisualViewport; innerHeight: number }
 }
 
@@ -67,28 +74,27 @@ function stubBrowser(opts: { vv?: boolean; height?: number; innerHeight?: number
   const classes = new Set<string>()
   const vv = opts.vv === false ? undefined : new FakeVisualViewport(opts.height ?? 700)
   const win = { visualViewport: vv, innerHeight: opts.innerHeight ?? 844 }
-  Object.defineProperty(globalThis, 'window', { value: win, configurable: true, writable: true })
-  Object.defineProperty(globalThis, 'document', {
-    value: {
-      documentElement: {
-        style: { setProperty: (name: string, value: string) => vars.set(name, value) },
-        classList: {
-          toggle: (name: string, force?: boolean) => {
-            if (force === undefined) {
-              if (classes.has(name)) classes.delete(name)
-              else classes.add(name)
-            } else if (force) {
-              classes.add(name)
-            } else {
-              classes.delete(name)
-            }
-          },
+  const doc = {
+    activeElement: null as unknown,
+    documentElement: {
+      style: { setProperty: (name: string, value: string) => vars.set(name, value) },
+      classList: {
+        toggle: (name: string, force?: boolean) => {
+          if (force === undefined) {
+            if (classes.has(name)) classes.delete(name)
+            else classes.add(name)
+          } else if (force) {
+            classes.add(name)
+          } else {
+            classes.delete(name)
+          }
         },
       },
     },
-    configurable: true,
-  })
-  return { vv, vars, classes, win }
+  }
+  Object.defineProperty(globalThis, 'window', { value: win, configurable: true, writable: true })
+  Object.defineProperty(globalThis, 'document', { value: doc, configurable: true })
+  return { vv, vars, classes, doc, win }
 }
 
 afterEach(() => {
@@ -191,6 +197,27 @@ describe('visualViewport (keyboard-open class for the on-screen bar)', () => {
     vv!.fire('resize')
     expect(vars.get(KEYBOARD_OFFSET_VAR)).toBe('344px')
     expect(classes.has('keyboard-open')).toBe(true)
+  })
+
+  it('scrolls a focused editable field into view on the keyboard-open transition', () => {
+    const { vv, doc } = stubBrowser({ height: 844, innerHeight: 844 })
+    const scrollIntoView = vi.fn()
+    doc.activeElement = { isContentEditable: true, scrollIntoView }
+    initVisualViewport()
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    vv!.height = 500
+    vv!.fire('resize')
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+  })
+
+  it('does not scroll a non-editable active element when the keyboard opens', () => {
+    const { vv, doc } = stubBrowser({ height: 844, innerHeight: 844 })
+    const scrollIntoView = vi.fn()
+    doc.activeElement = { isContentEditable: false, scrollIntoView }
+    initVisualViewport()
+    vv!.height = 500
+    vv!.fire('resize')
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })
 
