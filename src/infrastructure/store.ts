@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { GENERATED_CATEGORY, type CategoryFilter } from '@domain/Category'
 import type { Problem } from '@domain/Problem'
 import type { TestCase } from '@domain/TestCase'
 import { PROBLEM_BANK } from './problemBank'
@@ -61,6 +62,7 @@ interface AppState {
   selectedCaseIdx: number
   filter: 'All' | 'Easy' | 'Medium' | 'Hard'
   status: 'All' | 'Done' | 'Undone'
+  category: CategoryFilter
   search: string
   caseMarks: Record<string, string>
   cursorLine: number
@@ -73,6 +75,7 @@ interface AppState {
   selectProblem: (slug: string) => void
   setFilter: (filter: AppState['filter']) => void
   setStatus: (status: AppState['status']) => void
+  setCategory: (category: CategoryFilter) => void
   setSearch: (search: string) => void
   setSplit: (split: number) => void
   selectCase: (idx: number) => void
@@ -214,6 +217,7 @@ export const useAppStore = create<AppState>()(
       selectedCaseIdx: 0,
       filter: 'All',
       status: 'All',
+      category: 'All',
       search: '',
       caseMarks: {},
       cursorLine: 1,
@@ -255,6 +259,7 @@ export const useAppStore = create<AppState>()(
 
       setFilter: (filter) => set({ filter }),
       setStatus: (status) => set({ status }),
+      setCategory: (category) => set({ category }),
       setSearch: (search) => set({ search }),
       setSplit: (split) => set({ split }),
       selectCase: (idx) => set({ selectedCaseIdx: idx }),
@@ -344,7 +349,7 @@ export const useAppStore = create<AppState>()(
           ...PROBLEM_BANK.map((p) => p.num),
           ...generatedProblems.map((p) => p.num),
         ])
-        const accepted = { ...problem, num }
+        const accepted = { ...problem, num, category: GENERATED_CATEGORY }
         set({ generatedProblems: [...generatedProblems, accepted] })
         return { ok: true }
       },

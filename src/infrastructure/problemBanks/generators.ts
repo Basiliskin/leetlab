@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const GENERATOR_PROBLEMS: Problem[] = [
+export const GENERATOR_PROBLEMS: ProblemDraft[] = [
 {
   slug:'range-array', num:8005, title:'Range Array', difficulty:'Easy', tags:['Generator','Array'],
   fnName:'rangeArray', mode:'fn',

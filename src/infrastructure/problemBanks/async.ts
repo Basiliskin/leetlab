@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const ASYNC_PROBLEMS: Problem[] = [
+export const ASYNC_PROBLEMS: ProblemDraft[] = [
 {
   slug:'delayed-echo', num:8001, title:'Delayed Echo', difficulty:'Easy', tags:['Promise','Asynchronous'],
   fnName:'echoAfter', mode:'fn',

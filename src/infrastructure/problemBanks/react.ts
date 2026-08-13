@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const REACT_PROBLEMS: Problem[] = [
+export const REACT_PROBLEMS: ProblemDraft[] = [
 {
   slug:'props-changed', num:8009, title:'Props Changed', difficulty:'Easy', tags:['React','Memoization'],
   fnName:'propsChanged', mode:'fn',

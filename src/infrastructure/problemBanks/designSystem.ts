@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const DESIGN_SYSTEM_PROBLEMS: Problem[] = [
+export const DESIGN_SYSTEM_PROBLEMS: ProblemDraft[] = [
 {
   slug:'classnames-utility', num:8018, title:'Design System Utility — classNames', difficulty:'Easy', tags:['Design System','String'],
   fnName:'classNames', mode:'fn',

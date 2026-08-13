@@ -68,6 +68,7 @@ const generatedProblem: Problem = {
   ],
   hints: ['Walk the array once.', 'Remember seen values.'],
   desc: '<p>Find the pair that sums to <code>target</code>.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,2,3], target = 4</div><div><b>Output:</b>[0,2]</div></div><p class="note">Note text.</p>',
+  category: 'Generated',
 }
 
 const solvedAt = 1_712_000_000_000

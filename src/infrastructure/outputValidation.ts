@@ -543,6 +543,9 @@ export function validateGeneratedProblemObject(
 
   if (errors.length > 0) return { ok: false, errors }
 
+  // Model-authored problems are always stamped as 'Generated' on accept; the
+  // model itself never picks a category. Stamping here keeps `Problem`'s
+  // `category` field required without leaking the policy into the prompt.
   const problem: Problem = {
     slug: p.slug as string,
     num: p.num as number,
@@ -558,6 +561,7 @@ export function validateGeneratedProblemObject(
     tests: p.tests as Problem['tests'],
     hints: p.hints as string[],
     desc: p.desc as string,
+    category: 'Generated',
   }
   return { ok: true, problem }
 }

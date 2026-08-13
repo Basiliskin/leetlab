@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const STREAMING_PROBLEMS: Problem[] = [
+export const STREAMING_PROBLEMS: ProblemDraft[] = [
 {
   slug:'k-way-merge-async', num:8013, title:'K-Way Merge (Async Generators)', difficulty:'Hard', tags:['Async Generator','Merge Sort','Streaming'],
   fnName:'mergeKSortedAsync', mode:'fn',

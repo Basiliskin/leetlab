@@ -1,6 +1,6 @@
-import type { Problem } from '@domain/Problem'
+import type { ProblemDraft } from '@domain/Problem'
 
-export const CLASSIC_PROBLEMS: Problem[] = [
+export const CLASSIC_PROBLEMS: ProblemDraft[] = [
 {
   slug:'two-sum', num:1, title:'Two Sum', difficulty:'Easy', tags:['Array','Hash Table'],
   fnName:'twoSum', mode:'fn',

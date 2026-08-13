@@ -52,6 +52,7 @@ const validFnProblem: Problem = {
   ],
   hints: ['Walk the array once.', 'Remember seen values.'],
   desc: '<p>Find the pair that sums to <code>target</code>. <em>Exactly</em> <strong>one</strong> solution exists.</p><h4>Examples</h4><div class="ex"><div><b>Input:</b>nums = [1,2,3], target = 4</div><div><b>Output:</b>[0,2]</div></div><ul><li>2 ≤ nums.length ≤ 10<sup>4</sup></li><li>-10<sup>9</sup> ≤ nums[i] ≤ 10<sup>9</sup></li></ul><p class="note">Note text.</p>',
+  category: 'Generated',
 }
 
 const validClassProblem: Problem = {
@@ -80,6 +81,7 @@ const validClassProblem: Problem = {
   ],
   hints: [],
   desc: '<p>Implement a queue using two stacks.</p><p class="note">Judge protocol: <code>undefined</code> becomes <code>null</code>.</p>',
+  category: 'Generated',
 }
 
 function without<T extends object, K extends keyof T>(p: T, key: K): unknown {

@@ -1,4 +1,5 @@
 import { useAppStore, useMergedBank } from "../infrastructure/store";
+import { CATEGORIES, type CategoryFilter } from "../domain/Category";
 
 export function Sidebar() {
   const bank = useMergedBank();
@@ -6,9 +7,11 @@ export function Sidebar() {
   const currentSlug = useAppStore((s) => s.currentSlug);
   const filter = useAppStore((s) => s.filter);
   const status = useAppStore((s) => s.status);
+  const category = useAppStore((s) => s.category);
   const search = useAppStore((s) => s.search);
   const setFilter = useAppStore((s) => s.setFilter);
   const setStatus = useAppStore((s) => s.setStatus);
+  const setCategory = useAppStore((s) => s.setCategory);
   const setSearch = useAppStore((s) => s.setSearch);
   const problems = useAppStore((s) => s.problems);
 
@@ -29,8 +32,21 @@ export function Sidebar() {
     Undone: bank.length - doneCount,
   } as Record<string, number>;
 
+  // Category counts include 'All' (the merged-bank length). Each Category is
+  // only shown if at least one problem is tagged with it, so an empty
+  // 'Generated' bucket is hidden until the user accepts their first one.
+  const categoryCounts = { All: bank.length } as Record<CategoryFilter, number>;
+  for (const c of CATEGORIES) categoryCounts[c] = 0;
+  bank.forEach((p) => {
+    categoryCounts[p.category] = (categoryCounts[p.category] ?? 0) + 1;
+  });
+  const visibleCategories = CATEGORIES.filter(
+    (c) => (categoryCounts[c] ?? 0) > 0,
+  );
+
   const filtered = bank.filter((p) => {
     const okFilter = filter === "All" || p.difficulty === filter;
+    const okCategory = category === "All" || p.category === category;
     const solved = !!problems[p.slug]?.solvedAt;
     const okStatus =
       status === "All" || (status === "Done" ? solved : !solved);
@@ -39,7 +55,7 @@ export function Sidebar() {
       (p.title + " " + p.tags.join(" "))
         .toLowerCase()
         .includes(search.toLowerCase());
-    return okFilter && okStatus && okSearch;
+    return okFilter && okCategory && okStatus && okSearch;
   });
 
   return (
@@ -77,6 +93,21 @@ export function Sidebar() {
             </button>
           ))}
         </div>
+        {visibleCategories.length > 0 && (
+          <div className="chips" data-row="category">
+            {(['All', ...visibleCategories] as const).map((k) => (
+              <button
+                key={k}
+                className={`chip ${category === k ? "on" : ""}`}
+                onClick={() => setCategory(k)}
+                data-f={k}
+                title={`Category: ${k}`}
+              >
+                {k} · {categoryCounts[k]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <ul className="plist">

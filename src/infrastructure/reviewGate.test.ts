@@ -71,6 +71,7 @@ const generatedProblem: Problem = {
   ],
   hints: ['Walk the array once.', 'Remember seen values.'],
   desc: '<p>Find the pair that sums to <code>target</code>.</p>',
+  category: 'Generated',
 }
 
 const bankBefore = (): { count: number; slugs: string[] } => ({
