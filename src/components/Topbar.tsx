@@ -5,7 +5,12 @@ import { GenerateModal } from "./GenerateModal";
 import { ImportModal } from "./ImportModal";
 import { ManageProvidersModal } from "./ManageProvidersModal";
 
-export function Topbar() {
+interface TopbarProps {
+  navOpen?: boolean
+  onToggleNav?: () => void
+}
+
+export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
@@ -21,6 +26,14 @@ export function Topbar() {
 
   return (
     <header className="topbar">
+      <button
+        className="gen-btn nav-toggle"
+        aria-label="Problem list"
+        aria-expanded={navOpen}
+        onClick={onToggleNav}
+      >
+        ☰
+      </button>
       <div className="brand">
         <div className="logo">{}</div>
         <div>
@@ -57,7 +70,7 @@ export function Topbar() {
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen((o) => !o)}
       >
-        ☰
+        ⋯
       </button>
       <div className={`top-actions ${menuOpen ? "open" : ""}`}>
         <button

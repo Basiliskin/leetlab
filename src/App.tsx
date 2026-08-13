@@ -16,11 +16,14 @@ export function App() {
     return () => dispose?.();
   }, []);
 
-  // Mobile view-state flag: at phone widths the code editor claims the full
-  // workspace and the problem description becomes a tabbed overlay. On
-  // desktop the flag is inert (the CSS that reacts to `.desc-open` is
+  // Mobile view-state flags: at phone widths the code editor claims the full
+  // workspace and the problem description becomes a tabbed overlay, while the
+  // sidebar is reached through a slide-in drawer. On desktop the flags are
+  // inert (the CSS that reacts to `.desc-open` / `.sidebar.open` is
   // phone-scoped), and the workspace keeps the split layout regardless.
   const [mobileDescOpen, setMobileDescOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const closeNav = () => setMobileNavOpen(false);
 
   return (
     <>
@@ -28,9 +31,15 @@ export function App() {
         <i />
         <i />
       </div>
-      <Topbar />
+      <Topbar
+        navOpen={mobileNavOpen}
+        onToggleNav={() => setMobileNavOpen((o) => !o)}
+      />
       <div className="shell">
-        <Sidebar />
+        <Sidebar open={mobileNavOpen} onClose={closeNav} />
+        {mobileNavOpen && (
+          <div className="sidebar-backdrop" onClick={closeNav} />
+        )}
         <main className={`workspace ${mobileDescOpen ? "desc-open" : ""}`}>
           <div className="mobile-tabs">
             <button

@@ -67,7 +67,9 @@
      dropdown on mobile */
   .top-actions{display:flex;align-items:center;gap:16px}
   .topbar .mobile-menu-btn{display:none}
+  .topbar .nav-toggle{display:none}
   .menu-backdrop{display:none}
+  .sidebar-backdrop{display:none}
 
   /* ---------- shell ---------- */
   .shell{position:relative;z-index:1;flex:1;display:flex;gap:12px;padding:12px;min-height:0}
@@ -480,10 +482,15 @@
   /* ---------- mobile phone (<=480px): column stack, zero horizontal overflow ---------- */
   @media (max-width:480px){
     .shell{flex-direction:column;overflow-y:auto}
-    /* full-screen solve view: the sidebar is hidden here so the editor can
-       claim the whole content area; mobile-sidebar (order 7) re-adds it as an
-       overlay reachable via an explicit action. */
-    .sidebar{display:none}
+    /* sidebar becomes a slide-in drawer: closed by default, reached via the
+       phone-only nav toggle, zero layout shift (fixed, out of flow). Its
+       height is viewport-derived (between topbar and statusbar), so the
+       problem list scrolls inside it rather than capping at 210px. */
+    .sidebar{position:fixed;top:calc(56px + env(safe-area-inset-top,0px));bottom:calc(30px + env(safe-area-inset-bottom,0px));left:0;width:min(284px,85vw);max-height:none;z-index:40;transform:translateX(-105%);transition:transform .25s ease;box-shadow:0 20px 60px -12px rgba(0,0,0,.6);animation:none}
+    .sidebar.open{transform:none}
+    .sidebar .plist{overflow-y:auto}
+    .p-item{min-height:44px}
+    .sidebar-backdrop{display:block;position:fixed;inset:0;z-index:39;background:rgba(5,8,11,.6);backdrop-filter:blur(2px)}
     .workspace{flex-direction:column;min-height:0;min-width:0;position:relative}
     /* Description/Editor switcher (the tabs part of "description tabs/overlay") */
     .mobile-tabs{display:flex;flex:0 0 auto;height:44px;padding:0 6px;gap:4px;align-items:stretch;border-bottom:1px solid var(--line);background:var(--panel)}
@@ -514,11 +521,15 @@
        the editor-foot leaves flow and pins above the keyboard. */
     .keyboard-open .editor-foot{position:fixed;left:0;right:0;bottom:var(--keyboard-offset,0px);z-index:20}
     /* topbar: compact brand + progress count, actions behind one-tap menu */
-    .topbar{gap:10px;padding:0 8px}
+    .topbar{gap:8px;padding:0 6px}
+    .brand{gap:8px}
     .brand small{display:none}
+    /* compact brand on phones: just the logo tile, no wordmark */
+    .brand > div:last-child{display:none}
     .progress .segs{display:none}
     .tsbadge{display:none}
-    .topbar .mobile-menu-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;font-size:16px}
+    .topbar .nav-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;font-size:16px;padding:0}
+    .topbar .mobile-menu-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;font-size:16px;padding:0}
     .top-actions{display:none;position:absolute;top:57px;right:8px;z-index:30;flex-direction:column;align-items:stretch;gap:4px;padding:8px;min-width:180px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 16px 40px -12px rgba(0,0,0,.7)}
     .top-actions.open{display:flex}
     .top-actions .gen-btn{justify-content:flex-start;min-height:44px;width:100%}

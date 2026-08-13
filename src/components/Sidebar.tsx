@@ -1,7 +1,12 @@
 import { useAppStore, useMergedBank } from "../infrastructure/store";
 import { CATEGORIES, type CategoryFilter } from "../domain/Category";
 
-export function Sidebar() {
+interface SidebarProps {
+  open?: boolean
+  onClose?: () => void
+}
+
+export function Sidebar({ open = false, onClose }: SidebarProps) {
   const bank = useMergedBank();
   const selectProblem = useAppStore((s) => s.selectProblem);
   const currentSlug = useAppStore((s) => s.currentSlug);
@@ -59,7 +64,7 @@ export function Sidebar() {
   });
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${open ? "open" : ""}`}>
       <div className="side-head">
         <h2>Problem Set</h2>
         <div className="search">
@@ -119,7 +124,10 @@ export function Sidebar() {
                 key={p.slug}
                 className={`p-item ${p.slug === currentSlug ? "active" : ""} ${solved ? "solved" : ""}`}
                 data-slug={p.slug}
-                onClick={() => selectProblem(p.slug)}
+                onClick={() => {
+                  selectProblem(p.slug)
+                  onClose?.()
+                }}
                 style={{ animationDelay: `${i * 35}ms` }}
               >
                 <span className="p-status">✓</span>
