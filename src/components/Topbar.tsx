@@ -6,8 +6,8 @@ import { ImportModal } from "./ImportModal";
 import { ManageProvidersModal } from "./ManageProvidersModal";
 
 interface TopbarProps {
-  navOpen?: boolean
-  onToggleNav?: () => void
+  navOpen?: boolean;
+  onToggleNav?: () => void;
 }
 
 export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
@@ -19,9 +19,13 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = () => setMenuOpen(false);
   const bankLength = useMergedBank().length;
+  const visualSegments = 20;
   const solvedCount = Object.values(
     useAppStore((s) => s.problems) || {},
   ).filter((p) => p.solvedAt).length;
+  const solvedSegments = bankLength
+    ? Math.round((solvedCount / bankLength) * visualSegments)
+    : 0;
   const tsStatus = useAppStore((s) => s.tsStatus);
 
   return (
@@ -46,8 +50,8 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
       <div className="spacer" />
       <div className="progress">
         <div className="segs">
-          {Array.from({ length: bankLength }).map((_, i) => (
-            <i key={i} className={i < solvedCount ? "on" : ""} />
+          {Array.from({ length: visualSegments }).map((_, i) => (
+            <i key={i} className={i < solvedSegments ? "on" : ""} />
           ))}
         </div>
         <div className="cnt">
@@ -76,8 +80,8 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         <button
           className="gen-btn"
           onClick={() => {
-            setGenerateOpen(true)
-            closeMenu()
+            setGenerateOpen(true);
+            closeMenu();
           }}
         >
           + Generate
@@ -85,8 +89,8 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         <button
           className="gen-btn"
           onClick={() => {
-            setProvidersOpen(true)
-            closeMenu()
+            setProvidersOpen(true);
+            closeMenu();
           }}
         >
           ⚙ Providers
@@ -94,8 +98,8 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         <button
           className="gen-btn"
           onClick={() => {
-            downloadFullState()
-            closeMenu()
+            downloadFullState();
+            closeMenu();
           }}
         >
           ⇩ Export
@@ -103,15 +107,18 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         <button
           className="gen-btn"
           onClick={() => {
-            setImportOpen(true)
-            closeMenu()
+            setImportOpen(true);
+            closeMenu();
           }}
         >
           ⇧ Import
         </button>
       </div>
       {menuOpen && <div className="menu-backdrop" onClick={closeMenu} />}
-      <GenerateModal open={generateOpen} onClose={() => setGenerateOpen(false)} />
+      <GenerateModal
+        open={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+      />
       <ManageProvidersModal
         open={providersOpen}
         onClose={() => setProvidersOpen(false)}
