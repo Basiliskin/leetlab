@@ -20,6 +20,7 @@ export const CATEGORIES = [
   "Infrastructure",
   "Distributed Systems",
   "Observability",
+  "API Integration",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
