@@ -80,7 +80,7 @@
     background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;
     animation:fadeUp .5s .05s ease both;
   }
-  .side-head{padding:14px 14px 10px;border-bottom:1px solid var(--line-soft)}
+  .side-head{flex:0 1 48%;min-height:180px;overflow-y:auto;padding:14px 14px 10px;border-bottom:1px solid var(--line-soft)}
   .side-head h2{font-family:var(--display);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
   .search{position:relative;margin-bottom:10px}
   .search input{
@@ -97,7 +97,7 @@
   }
   .chip:hover{color:var(--ink);transform:translateY(-1px)}
   .chip.on{border-color:var(--amber);color:var(--amber);background:rgba(255,161,22,.08)}
-  .plist{list-style:none;overflow-y:auto;flex:1;padding:6px}
+  .plist{list-style:none;overflow-y:auto;flex:1 1 52%;min-height:180px;padding:6px}
   .p-item{
     display:flex;align-items:center;gap:10px;padding:10px 10px;border-radius:8px;cursor:pointer;
     border-left:3px solid transparent;transition:background .18s, transform .18s, border-color .18s;
@@ -472,7 +472,7 @@
 
   @media (max-width:980px){
     .shell{flex-direction:column;overflow-y:auto}
-    .sidebar{flex:0 0 auto;max-height:210px}
+    .sidebar{flex:0 0 auto;max-height:min(70vh,520px)}
     .workspace{flex-direction:column;min-height:800px}
     .desc-pane{flex:0 0 340px;min-width:0}
     .divider{display:none}
