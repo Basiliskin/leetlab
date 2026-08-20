@@ -22,6 +22,8 @@ export const CATEGORIES = [
   "Observability",
   "API Integration",
   "State Machines",
+  "Validation & Transformation",
+  "Cache Storage",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];

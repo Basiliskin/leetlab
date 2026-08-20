@@ -20,6 +20,8 @@ import { DISTRIBUTED_SYSTEMS_PROBLEMS } from "./distributed-systems";
 import { OBSERVABILITY_PROBLEMS } from "./observability";
 import { API_INTEGRATION_PROBLEMS } from "./api-integration";
 import { STATE_MACHINE_PROBLEMS } from "./state-machines";
+import { VALIDATION_TRANSFORMATION_PROBLEMS } from "./validation-transformation";
+import { CACHE_STORAGE_PROBLEMS } from "./cache-storage";
 
 export { CLASSIC_PROBLEMS };
 export { ASYNC_PROBLEMS };
@@ -39,6 +41,8 @@ export { DISTRIBUTED_SYSTEMS_PROBLEMS };
 export { OBSERVABILITY_PROBLEMS };
 export { API_INTEGRATION_PROBLEMS };
 export { STATE_MACHINE_PROBLEMS };
+export { VALIDATION_TRANSFORMATION_PROBLEMS };
+export { CACHE_STORAGE_PROBLEMS };
 /**
  * One source of truth for the sub-bank → category mapping. Authors writing
  * individual problems never set `category` themselves; the aggregation in
@@ -64,6 +68,8 @@ const SUB_BANKS: ReadonlyArray<readonly [Category, readonly ProblemDraft[]]> = [
   ["Observability", OBSERVABILITY_PROBLEMS],
   ["API Integration", API_INTEGRATION_PROBLEMS],
   ["State Machines", STATE_MACHINE_PROBLEMS],
+  ["Validation & Transformation", VALIDATION_TRANSFORMATION_PROBLEMS],
+  ["Cache Storage", CACHE_STORAGE_PROBLEMS],
 ];
 
 const tag = (
