@@ -15,6 +15,9 @@ import { PROMISE_PROBLEMS } from "./promises";
 import { ADVANCED_PROMISE_PROBLEMS } from "./advanced-promises";
 import { ADVANCED_EVENT_PROBLEMS } from "./advanced-events";
 import { ADVANCED_QUEUE_PROBLEMS } from "./advanced-queues";
+import { INFRASTRUCTURE_PROBLEMS } from "./infrastructure";
+import { DISTRIBUTED_SYSTEMS_PROBLEMS } from "./distributed-systems";
+import { OBSERVABILITY_PROBLEMS } from "./observability";
 
 export { CLASSIC_PROBLEMS };
 export { ASYNC_PROBLEMS };
@@ -29,7 +32,9 @@ export { PROMISE_PROBLEMS };
 export { ADVANCED_PROMISE_PROBLEMS };
 export { ADVANCED_EVENT_PROBLEMS };
 export { ADVANCED_QUEUE_PROBLEMS };
-
+export { INFRASTRUCTURE_PROBLEMS };
+export { DISTRIBUTED_SYSTEMS_PROBLEMS };
+export { OBSERVABILITY_PROBLEMS };
 /**
  * One source of truth for the sub-bank → category mapping. Authors writing
  * individual problems never set `category` themselves; the aggregation in
@@ -50,6 +55,9 @@ const SUB_BANKS: ReadonlyArray<readonly [Category, readonly ProblemDraft[]]> = [
   ["Advanced Promises", ADVANCED_PROMISE_PROBLEMS],
   ["Advanced Events", ADVANCED_EVENT_PROBLEMS],
   ["Advanced Queues", ADVANCED_QUEUE_PROBLEMS],
+  ["Infrastructure", INFRASTRUCTURE_PROBLEMS],
+  ["Distributed Systems", DISTRIBUTED_SYSTEMS_PROBLEMS],
+  ["Observability", OBSERVABILITY_PROBLEMS],
 ];
 
 const tag = (

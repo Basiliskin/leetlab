@@ -17,6 +17,9 @@ export const CATEGORIES = [
   "Advanced Promises",
   "Advanced Events",
   "Advanced Queues",
+  "Infrastructure",
+  "Distributed Systems",
+  "Observability",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
