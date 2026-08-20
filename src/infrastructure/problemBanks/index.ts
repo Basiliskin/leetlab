@@ -19,6 +19,7 @@ import { INFRASTRUCTURE_PROBLEMS } from "./infrastructure";
 import { DISTRIBUTED_SYSTEMS_PROBLEMS } from "./distributed-systems";
 import { OBSERVABILITY_PROBLEMS } from "./observability";
 import { API_INTEGRATION_PROBLEMS } from "./api-integration";
+import { STATE_MACHINE_PROBLEMS } from "./state-machines";
 
 export { CLASSIC_PROBLEMS };
 export { ASYNC_PROBLEMS };
@@ -37,6 +38,7 @@ export { INFRASTRUCTURE_PROBLEMS };
 export { DISTRIBUTED_SYSTEMS_PROBLEMS };
 export { OBSERVABILITY_PROBLEMS };
 export { API_INTEGRATION_PROBLEMS };
+export { STATE_MACHINE_PROBLEMS };
 /**
  * One source of truth for the sub-bank → category mapping. Authors writing
  * individual problems never set `category` themselves; the aggregation in
@@ -61,6 +63,7 @@ const SUB_BANKS: ReadonlyArray<readonly [Category, readonly ProblemDraft[]]> = [
   ["Distributed Systems", DISTRIBUTED_SYSTEMS_PROBLEMS],
   ["Observability", OBSERVABILITY_PROBLEMS],
   ["API Integration", API_INTEGRATION_PROBLEMS],
+  ["State Machines", STATE_MACHINE_PROBLEMS],
 ];
 
 const tag = (

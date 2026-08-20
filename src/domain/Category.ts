@@ -21,6 +21,7 @@ export const CATEGORIES = [
   "Distributed Systems",
   "Observability",
   "API Integration",
+  "State Machines",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
