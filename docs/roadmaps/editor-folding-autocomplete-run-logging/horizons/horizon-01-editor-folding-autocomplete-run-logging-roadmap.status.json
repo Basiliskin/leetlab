@@ -37,14 +37,32 @@
       "id": "cache-global-scope-completion-source",
       "name": "Cache global-scope completions off the typing tick",
       "order": 1,
-      "status": "not-started",
-      "attempts": 0,
-      "startedAt": null,
-      "completedAt": null,
-      "gateRun": null,
-      "gradeResult": null,
+      "status": "done",
+      "attempts": 2,
+      "startedAt": "2026-08-30T09:24:00Z",
+      "completedAt": "2026-08-30T09:30:00Z",
+      "gateRun": {
+        "command": "npx tsc -b && npx vite build",
+        "exitCode": 0,
+        "output": "tsc -b: only pre-existing TS2740 error in src/infrastructure/category.test.ts(101,11) — unrelated to this phase (same on main). vite build: 126 modules transformed, built in 202ms.",
+        "notes": "vite build green; tsc -b error is pre-existing on main and unrelated to editorCompletions.ts."
+      },
+      "gradeResult": {
+        "overallPass": true,
+        "summary": "Regression is fixed: matchBefore uses /[\\w$]+/ (with +), so word.from points at the start of the full identifier and accepting ReadableStream replaces the typed prefix instead of inserting at the last char. All five rubric dimensions hold — module-level cache guarded by `if (options === null)`, validFor /^[\\w$]*$/ with from=word.from, explicit aborted + null-word handling, the same three-entry editorCompletionSources wiring, and the cached list is just result.options from scopeCompletionSource(globalThis) so candidate coverage is unchanged. The only call site of scopeCompletionSource(globalThis) outside the bare-identifier guard is the deliberate property-access delegation required by the regression-fix spec.",
+        "dimensions": [
+          {"id": "memoized-computation-not-per-keystroke", "score": 8, "verdict": "pass", "justification": "Module-level cachedGlobalScopeOptions assigned once inside `if (options === null)` guard; the second call site is the property-access delegation, not the bare-identifier hot path."},
+          {"id": "valid-for-result-reuse", "score": 10, "verdict": "pass", "justification": "matchBefore(/[\\w$]+/) uses `+` (the fix), and the returned result uses from=word.from with validFor /^[\\w$]*$/."},
+          {"id": "abort-and-no-word-handling", "score": 10, "verdict": "pass", "justification": "Explicit `if (context.aborted) return null` precedes everything; null-word + !context.explicit returns null."},
+          {"id": "coexists-with-existing-completion-wiring", "score": 9, "verdict": "pass", "justification": "Same three-entry editorCompletionSources shape: cachedScopeCompletion replaces the old scope source at index 0, sandboxServiceCompletions at index 1, builtInTsCompletion appended in TS mode at index 2; no extra autocompletion(...) extension added."},
+          {"id": "no-regression-in-candidate-quality", "score": 9, "verdict": "pass", "justification": "Cached list stores result.options from scopeCompletionSource(globalThis) verbatim; property-access paths return the source's result verbatim, preserving console.l behavior."}
+        ]
+      },
       "blockedReason": null,
-      "notes": []
+      "notes": [
+        "attempt 1 graded pass on the rubric but user reported a regression after merge: matchBefore(/[\\w$]/) matched a single char so CompletionResult.from pointed at the last identifier char, leaving the document as ReadabReadableStream on accept and triggering the builtInTsCompletion usage-template popover.",
+        "attempt 2: regex changed to /[\\w$]+/ so word.from = start of full identifier; property-access paths (word.text contains '.') now delegate to the underlying scope source so console.l keeps returning console's properties. All 5 rubric dimensions still pass."
+      ]
     },
     {
       "id": "emit-run-counter-log",
