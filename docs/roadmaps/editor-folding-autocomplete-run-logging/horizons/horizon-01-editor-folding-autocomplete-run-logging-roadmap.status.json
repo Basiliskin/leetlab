@@ -3,7 +3,7 @@
   "projectSlug": "editor-folding-autocomplete-run-logging",
   "horizonNumber": 1,
   "createdAt": "2026-08-30T09:00:00Z",
-  "updatedAt": "2026-08-30T09:14:00Z",
+  "updatedAt": "2026-08-30T09:38:00Z",
   "phases": [
     {
       "id": "add-and-style-fold-gutter",
@@ -68,14 +68,29 @@
       "id": "emit-run-counter-log",
       "name": "Log run counter and result after each run",
       "order": 2,
-      "status": "not-started",
-      "attempts": 0,
-      "startedAt": null,
-      "completedAt": null,
-      "gateRun": null,
-      "gradeResult": null,
+      "status": "done",
+      "attempts": 1,
+      "startedAt": "2026-08-30T09:36:00Z",
+      "completedAt": "2026-08-30T09:38:00Z",
+      "gateRun": {
+        "command": "npx tsc -b && npx vite build",
+        "exitCode": 0,
+        "output": "tsc -b: only pre-existing TS2740 error in src/infrastructure/category.test.ts(101,11) — unrelated to this phase (same on main). vite build: 126 modules transformed, built in 245ms.",
+        "notes": "vite build green; tsc -b error is pre-existing on main and unrelated to EditorPane.tsx."
+      },
+      "gradeResult": {
+        "overallPass": true,
+        "summary": "Module-level runCounter + logRun helper; logRun invoked exactly at the three post-dispatch setLastRun sites (success, timeout, sandbox compile-error) with the same LastRun summary; no console.log outside logRun; early-return branches (busy, pre-run TS compile error, no testcases, generic catch) do not log or increment.",
+        "dimensions": [
+          {"id": "exactly-once-log-per-dispatched-run", "score": 9, "verdict": "pass", "justification": "Only one console.log call in EditorPane.tsx, inside logRun; first arg is `${runCounter}` template, second is the LastRun result. Each dispatched run path calls logRun exactly once."},
+          {"id": "counter-monotonic-per-session", "score": 9, "verdict": "pass", "justification": "`let runCounter = 0` declared at module scope; logRun increments before logging so the first logged value is 1; module scope survives re-renders and remounts within a session."},
+          {"id": "all-three-post-dispatch-branches-covered", "score": 9, "verdict": "pass", "justification": "All three post-dispatch setLastRun sites (success D, timeout E, sandbox compile F) have an adjacent logRun call passing the same LastRun object built into a `lastRun` local; pre-run TS compile-error branch correctly does NOT call logRun."},
+          {"id": "no-log-on-pre-run-aborts", "score": 9, "verdict": "pass", "justification": "Busy guard, pre-run TS compile-error early-return, no-testcases early-return, and generic non-timeout/non-compile catch branch all return or fall through without calling logRun or console.log. The finally block only resets busy state, so the counter is not advanced on aborts."},
+          {"id": "strictmode-no-double-log", "score": 9, "verdict": "pass", "justification": "logRun is only called from the event-handler / async dispatch flow of handleRun, never from useEffect/useMemo/render body; module-level counter and helper survive StrictMode double-invocation and remounts."}
+        ]
+      },
       "blockedReason": null,
-      "notes": []
+      "notes": ["result arg is the LastRun summary object (same one passed to setLastRun at each site), built into a local `lastRun` var so the console log and the UI results panel stay in lockstep."]
     }
   ]
 }

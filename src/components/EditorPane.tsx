@@ -1,5 +1,5 @@
 import { useAppStore } from "../infrastructure/store";
-import type { LastRunCase } from "../infrastructure/store";
+import type { LastRun, LastRunCase } from "../infrastructure/store";
 import { useState, useEffect, useRef } from "react";
 import { useRunCode, parseCases, isRunError } from "../hooks/useRunCode";
 import { tsCompiler } from "../infrastructure/tsCompiler";
@@ -10,6 +10,18 @@ import CodeEditor from "./CodeEditor";
 // Timestamp helper for submission records. Kept behind a function so the
 // purity rule sees run/submit handlers as side-effecting only, not render.
 const now = () => Date.now();
+
+// Per-session run counter for the run-metadata console diagnostic.
+// Module-level (not useRef/useState) so it survives re-renders and StrictMode
+// remounts within a page session, and resets on full page reload.
+let runCounter = 0;
+
+// Helper called once per dispatched run with the same LastRun summary that
+// the UI receives, so console and result panel stay in lockstep.
+function logRun(result: LastRun) {
+  runCounter += 1;
+  console.log(`${runCounter}`, result);
+}
 
 export function EditorPane() {
   const { lang, currentSlug, getProblem, getProblemState } = useAppStore();
@@ -57,6 +69,7 @@ export function EditorPane() {
 
   async function handleRun(isSubmit: boolean) {
     if (busy) return;
+    runCounter = 0;
     setBusy(true);
     let runnable: ParsedTestCase[] = [];
     try {
@@ -137,7 +150,9 @@ export function EditorPane() {
       }
 
       // save last run details for result view
-      setLastRun(currentSlug, { results, logs, verdict, passed, total, ms });
+      const lastRun: LastRun = { results, logs, verdict, passed, total, ms };
+      setLastRun(currentSlug, lastRun);
+      logRun(lastRun);
       useAppStore.getState().setActiveResultTab("result");
 
       if (isSubmit && verdict === "Accepted") {
@@ -175,14 +190,16 @@ export function EditorPane() {
         });
 
         const verdict = "Time Limit Exceeded";
-        setLastRun(currentSlug, {
+        const lastRun: LastRun = {
           results: tleResults,
           logs: err.logs || [],
           verdict,
           passed,
           total,
           ms: null,
-        });
+        };
+        setLastRun(currentSlug, lastRun);
+        logRun(lastRun);
         useAppStore.getState().setActiveResultTab("result");
 
         if (isSubmit) {
@@ -198,7 +215,7 @@ export function EditorPane() {
       } else if (err?.type === "compile") {
         // Sandbox compile failure (e.g. the expected function/class is not
         // defined): surface the banner and any judge logs in the result view.
-        setLastRun(currentSlug, {
+        const lastRun: LastRun = {
           compile: err.error,
           results: [],
           logs: err.logs || [],
@@ -206,7 +223,9 @@ export function EditorPane() {
           passed: 0,
           total: 0,
           ms: null,
-        });
+        };
+        setLastRun(currentSlug, lastRun);
+        logRun(lastRun);
         useAppStore.getState().setActiveResultTab("result");
       } else {
         console.error(e);
@@ -228,11 +247,7 @@ export function EditorPane() {
       const p = getProblem(currentSlug)!;
       return p.tests.map((t, i) => ({
         id: `builtin-${i}`,
-        inputText: JSON.stringify(
-          p.mode === "class" ? t.calls : t.in,
-          null,
-          1,
-        ),
+        inputText: JSON.stringify(p.mode === "class" ? t.calls : t.in, null, 1),
         expectedText: JSON.stringify(t.out),
       }));
     }
@@ -263,7 +278,9 @@ export function EditorPane() {
             TypeScript
           </button>
         </div>
-        <span className={`autosave ${fmtMsg ? "show" : ""} ${fmtMsg === "Fix syntax errors first" ? "err" : ""}`}>
+        <span
+          className={`autosave ${fmtMsg ? "show" : ""} ${fmtMsg === "Fix syntax errors first" ? "err" : ""}`}
+        >
           {fmtMsg}
         </span>
         <div className="spacer" />
