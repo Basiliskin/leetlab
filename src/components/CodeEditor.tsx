@@ -18,6 +18,9 @@ import {
   StateField,
 } from "@codemirror/state";
 import {
+  codeFolding,
+  foldGutter,
+  foldKeymap,
   HighlightStyle,
   syntaxHighlighting,
   syntaxTree,
@@ -141,6 +144,35 @@ const editorTheme = EditorView.theme({
   ".cm-activeLineGutter": {
     backgroundColor: "transparent",
     color: "var(--amber)",
+  },
+  // Fold gutter (Phase 1, editor-folding-autocomplete-run-logging).
+  // The CodeMirror `foldGutter()` extension adds a column next to the line
+  // numbers with a triangle toggle for every foldable range. The
+  // `.cm-foldPlaceholder` rule styles the inline pill CodeMirror draws in
+  // place of the collapsed region. Without explicit rules both render near-
+  // invisible against `--panel2`: the toggle glyph uses the same #3d4a5a as
+  // the line-number text, and the placeholder uses a near-white color that
+  // looks like a stray character on the dark background.
+  ".cm-foldGutter": {
+    width: "16px",
+  },
+  ".cm-foldGutter .cm-gutterElement": {
+    color: "#7a8696",
+    cursor: "pointer",
+    transition: "color 80ms ease",
+  },
+  ".cm-foldGutter .cm-gutterElement:hover": {
+    color: "var(--amber)",
+  },
+  ".cm-foldPlaceholder": {
+    display: "inline-block",
+    margin: "0 2px",
+    padding: "0 6px",
+    borderRadius: "3px",
+    backgroundColor: "var(--panel)",
+    border: "1px solid var(--line-soft)",
+    color: "var(--ink-dim, #8b98a9)",
+    fontStyle: "italic",
   },
   ".cm-tooltip": {
     backgroundColor: "var(--panel)",
@@ -763,6 +795,7 @@ function extensionsFor(lang: "js" | "ts") {
       ...completionKeymap,
       ...defaultKeymap,
       ...historyKeymap,
+      ...foldKeymap,
     ]),
     EditorView.updateListener.of((update) => {
       if (update.transactions.some((tr) => tr.annotation(external))) return;
@@ -777,6 +810,15 @@ function extensionsFor(lang: "js" | "ts") {
     }),
     editorTheme,
     syntaxHighlighting(syntaxStyle),
+    // Fold gutter (Phase 1, editor-folding-autocomplete-run-logging).
+    // `codeFolding()` teaches the editor how to find foldable ranges
+    // (the @codemirror/lang-javascript grammar marks blocks/functions/
+    // objects as foldable for both js and ts); `foldGutter()` renders the
+    // clickable toggle column. Both are added here, near lintGutter(),
+    // so each language branch inherits them through extensionsFor(lang)
+    // on mount and on language reconfigure.
+    codeFolding(),
+    foldGutter(),
     lintGutter(),
     lang === "ts" ? tsLint : syntaxLint,
     // The usage-template popover field is registered as its own

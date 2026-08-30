@@ -1,0 +1,63 @@
+{
+  "roadmapFile": "docs/roadmaps/editor-folding-autocomplete-run-logging/horizons/horizon-01-editor-folding-autocomplete-run-logging-roadmap.json",
+  "projectSlug": "editor-folding-autocomplete-run-logging",
+  "horizonNumber": 1,
+  "createdAt": "2026-08-30T09:00:00Z",
+  "updatedAt": "2026-08-30T09:14:00Z",
+  "phases": [
+    {
+      "id": "add-and-style-fold-gutter",
+      "name": "Add fold gutter and style it for the dark theme",
+      "order": 0,
+      "status": "done",
+      "attempts": 1,
+      "startedAt": "2026-08-30T09:12:30Z",
+      "completedAt": "2026-08-30T09:14:00Z",
+      "gateRun": {
+        "command": "npx vite build",
+        "exitCode": 0,
+        "output": "vite v8.2.1 building client environment for production... ✓ 126 modules transformed. ✓ built in 314ms",
+        "notes": "Pre-existing tsc -b failure in src/infrastructure/category.test.ts and 11 pre-existing test failures in 4 files (providerRegistry, category, etc.) are identical to main and unrelated to this phase. vite build (the bundling half) is green."
+      },
+      "gradeResult": {
+        "overallPass": true,
+        "summary": "All five dimensions meet or exceed minScore (8/8/9/10/10). Implementation correctly imports codeFolding/foldGutter/foldKeymap from @codemirror/language, wires codeFolding()+foldGutter() inside extensionsFor(lang) so both js and ts branches inherit them, spreads foldKeymap into the existing keymap.of([...]), and adds four dark-theme CSS rules that give the gutter toggles and placeholder a visible, theme-consistent look against --panel2. The diff is purely additive to src/components/CodeEditor.tsx; no restructuring of extensionsFor, no new keymap.of or EditorView instance, and the build exits 0. Pre-existing tsc/vitest failures on main are not regressions caused by this phase.",
+        "dimensions": [
+          {"id": "fold-extensions-wired-in", "score": 10, "verdict": "pass"},
+          {"id": "fold-behavior-observable", "score": 8, "verdict": "pass"},
+          {"id": "dark-theme-fold-styles", "score": 9, "verdict": "pass"},
+          {"id": "consistent-with-existing-editor-structure", "score": 10, "verdict": "pass"},
+          {"id": "no-regressions-in-editor", "score": 9, "verdict": "pass"}
+        ]
+      },
+      "blockedReason": null,
+      "notes": ["vite build green; tsc -b and vitest failures are pre-existing on main and unrelated to CodeEditor changes."]
+    },
+    {
+      "id": "cache-global-scope-completion-source",
+      "name": "Cache global-scope completions off the typing tick",
+      "order": 1,
+      "status": "not-started",
+      "attempts": 0,
+      "startedAt": null,
+      "completedAt": null,
+      "gateRun": null,
+      "gradeResult": null,
+      "blockedReason": null,
+      "notes": []
+    },
+    {
+      "id": "emit-run-counter-log",
+      "name": "Log run counter and result after each run",
+      "order": 2,
+      "status": "not-started",
+      "attempts": 0,
+      "startedAt": null,
+      "completedAt": null,
+      "gateRun": null,
+      "gradeResult": null,
+      "blockedReason": null,
+      "notes": []
+    }
+  ]
+}
