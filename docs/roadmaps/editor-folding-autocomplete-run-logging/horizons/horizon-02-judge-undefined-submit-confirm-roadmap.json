@@ -1,0 +1,285 @@
+{
+  "task": "Fix two bug reports from the user: (1) the runtime judge in sandbox.worker.ts rejects solutions whose return values contain `undefined` even though safeOut (display) renders those positions as `null` — e.g. `Promise.allSettled` solutions that resolve to `[null, 4, null]` via `d.value` produce `[undefined, 4, undefined]` and are marked failing; (2) the Submit button never asks for confirmation, so a user can submit a run whose cases haven't all passed without a deliberate `submit anyway` step.",
+  "analysis": {
+    "objective": "Fix two bugs in the leetlab judge/editor flow: (1) the worker deep-equality check rejects solutions whose return value contains `undefined` even though `JSON.stringify` (the displayed output) renders those positions as `null`, so e.g. `Promise.allSettled`-style solutions that resolve to `[null, 4, null]` via `d.value` produce `[undefined, 4, undefined]` and are marked failing; (2) the Submit button never asks for confirmation, so a user can submit a run whose cases have not all passed without a deliberate `submit anyway` step.",
+    "successDefinition": "Solutions whose values JSON-normalize to the expected text (e.g. `[null,4,null]`) now pass the worker deep-equality check instead of being incorrectly failed; the Submit button, when clicked after a run whose verdict is anything other than `Accepted`, opens a confirmation dialog that names the pass count (`Passed X / Y`) and lets the user choose `Cancel` or `Submit anyway`; on `Accepted` the dialog is skipped and submission proceeds as today; existing passing cases continue to pass; `tsc -b && vite build` and `vitest run` stay green.",
+    "assumptions": [
+      "Scope is exactly the two named bugs and their tests — not a broader rewrite of the judge or the Submit flow.",
+      "Quality bar stays `prototype` (matches the horizon-1 vision and the project's existing test coverage).",
+      "`undefined` vs `null` mismatch is the only reported comparison bug; the JSON-displayed-vs-compared gap is the minimal fix target. NaN, BigInt, and key-ordering edge cases are out of scope unless a test actually fails after the fix.",
+      "The confirmation dialog should fire only when `verdict !== 'Accepted'`; passing runs submit directly without a prompt (matches the user's wording: 'submit problematic cases').",
+      "The dialog is short and lives inline in `EditorPane.tsx` — no need for a generic modal primitive or portal infrastructure for one screen.",
+      "No new dependencies; no API contract changes for the store.",
+      "Class-mode already normalizes `undefined -> null` at line 356 of `sandbox.worker.ts`; the fn-mode comparison is the actual gap. The fix only needs to cover `runFn`.",
+      "Existing direct deepEq semantics are intentional for cases where the answer is a plain primitive (e.g. `4` vs `null` should still fail)."
+    ],
+    "risks": [
+      {
+        "name": "Over-broad normalization breaks legitimate failures",
+        "detail": "Treating `undefined === null` globally could make `return undefined` accidentally pass a problem that expected `null`. Mitigation: normalize only on the comparison side (preserve the original `out` for the displayed `output` field), and limit the rule to array members / object values where JSON does the same collapse — not bare top-level returns."
+      },
+      {
+        "name": "Submission UX regression — silent failure when verdict is failing",
+        "detail": "If the confirmation dialog errors out, a user would lose the ability to submit a non-Accepted run entirely. Mitigation: the Submit button still calls handleRun(true) on confirm; the dialog is a guard, not a gate."
+      },
+      {
+        "name": "NaN handling regression",
+        "detail": "Current deepEq has explicit NaN handling; a naive switch to JSON comparison would drop it. Mitigation: keep deepEq as the inner comparator and add a pre-normalization step that converts `undefined` to `null` recursively in array slots and object values before deepEq runs."
+      },
+      {
+        "name": "Marker state leaks across problems",
+        "detail": "The confirmation dialog must read the `verdict` from the *current* problem's last run, not module state. Reuse `useAppStore.getState().lastRuns[currentSlug]` rather than a local variable."
+      }
+    ],
+    "outOfScope": [
+      "Rewriting the judge to a richer expectation grammar (e.g. matcher-by-matcher, custom comparator per problem, snapshot tests).",
+      "Persisting submissions to a server; current localStorage-based `addSubmission` is unchanged.",
+      "Adding a generic modal/portal primitive or refactoring existing modals (GenerateModal, ImportModal, Drawer) — the new dialog stays local in EditorPane.",
+      "Surfacing the verdict table in a deeper result panel; existing verdict pills/marks are untouched.",
+      "Re-running the fold or autocomplete work from horizon 1; no Discovery entry on those topics mentions any regression.",
+      "Coverage of every rejection-shape corner case (objects with undefined keys, sparse arrays as roots, Promise object identity) — only the demonstrated case (fn-return undefined-in-array) needs to pass."
+    ],
+    "ubiquitousLanguage": [
+      { "term": "judge", "definition": "the sandbox web worker + comparison logic that runs a problem's test cases against user code" },
+      { "term": "case", "definition": "one element of `Problem.tests` — a single input/expected pair (or call/expected for class mode)" },
+      { "term": "verdict", "definition": "the top-level status of a run: 'Accepted' (all passed), 'Wrong Answer' / 'No Expected Cases' / 'Time Limit Exceeded' / 'Compile Error'" },
+      { "term": "case mark", "definition": "the per-case pill label: `pass` / `fail` / `err` / `tle`" },
+      { "term": "deepEq", "definition": "the worker-side recursive equality function used to grade each case" },
+      { "term": "safeOut", "definition": "the `JSON.stringify`-based wrapper used to render user outputs into the result panel" },
+      { "term": "submit confirmation", "definition": "a small inline modal that asks the user to confirm `Submit` when the last run's verdict is not `Accepted`" }
+    ],
+    "domainShape": "technical",
+    "domainShapeReason": "Both changes are local to the worker judge comparison (`sandbox.worker.ts`) and the editor submit handler (`EditorPane.tsx`); no business entities, rules, or workflows are introduced. This continues the technical shape established in horizon 1's vision."
+  },
+  "discoveryFindings": [
+    { "id": "judge.compare.site.fn", "area": "judge", "finding": "Single runtime equality helper `deepEq` in `src/infrastructure/sandbox.worker.ts` lines 28-55; called from `runFn` at line 269 (`pass = hasExp ? deepEq(out, c.expected) : null`) and from `runClass` at line 386.", "implication": "A single normalization step added before `deepEq` in `runFn` fixes the user's undefined-vs-null case without touching class-mode (which already normalizes undefined -> null at line 356)." },
+    { "id": "judge.compare.noFallback", "area": "judge", "finding": "No stringify-based fallback exists in the worker; `JSON.stringify` is used only inside `safeOut` (line 22) for diagnostic rendering, not for equality.", "implication": "Discrepancy between displayed output (`safeOut` shows undefined as `null` in arrays) and graded equality (`deepEq` returns false) is real and reproducible." },
+    { "id": "test.precedent.sandboxAmbient", "area": "tests", "finding": "`src/infrastructure/sandboxAmbient.test.ts` fixture-driven tests for the ambient `.d.ts` host; representative names: `declares exactly the aggregator handles, typed, in global scope`, `serves the full transitive import closure of the aggregator`.", "implication": "New judge tests should follow the same fixture style for file-level assertions." },
+    { "id": "test.precedent.sandboxE2E", "area": "tests", "finding": "`src/infrastructure/sandboxE2E.test.ts` loads `sandbox.worker.ts` directly, captures `postMessage`, invokes `self.onmessage` with a synthetic `MessageEvent`. Representative: `runs to completion, exercising redis, pg, rabbitmq, kafka, queue`, `emits a trace line for every service call in the {l,t} case-log stream`.", "implication": "The user can run real worker code in tests without spinning up a browser worker — the precedent for adding `deepEq(undefined-vs-null)` cases to a worker test file." },
+    { "id": "ui.submitsurface.noTest", "area": "tests", "finding": "No test file covers `src/components/EditorPane.tsx`. Grep for `EditorPane`, `btn-submit`, or `\"Submit\"` returns zero hits across `src/**.test.*`.", "implication": "Submit UI has zero coverage today. A new EditorPane.test.ts is appropriate; @testing-library/react is not currently a devDep (need to verify before adding)." },
+    { "id": "ui.submitsurface.button", "area": "ui", "finding": "Submit button at `src/components/EditorPane.tsx` lines 312-319 calls `onClick={() => handleRun(true)}`. No existing confirmation/modal exists inside EditorPane.", "implication": "Confirmation dialog must be added from scratch; not rewriting an existing control." },
+    { "id": "ui.modal.precedent.ManageProvidersModal", "area": "ui", "finding": "`src/components/ManageProvidersModal.tsx` line 89 uses local state `const [confirmingId, setConfirmingId] = useState<string | null>(null)` and a two-stage inline button for delete confirmation, rather than a nested modal.", "implication": "The close precedent for a small inline confirmation is `ManageProvidersModal`, not the full `ImportModal` shell. Mirror that pattern." },
+    { "id": "store.verdict.writesNotReads", "area": "store", "finding": "EditorPane only WRITES to `lastRuns` (via `setLastRun(currentSlug, lastRun)` at line 154) and constructs `verdict` strings at lines 137/192/222. It does NOT read `verdict` back. Drawer.tsx:16 reads via selector. DescPane reads submission-history verdicts, not run-time last-verdict.", "implication": "Three options for the confirmation source: (a) new derived selector, (b) imperative `useAppStore.getState().lastRuns?.[currentSlug]?.verdict` inside the handler, or (c) reuse the local `verdict` variable computed in `handleRun` itself — option (c) is the lowest-blast-radius choice because no extra reads or selectors are required." },
+    { "id": "store.verdict.localReuse", "area": "store", "finding": "`handleRun(isSubmit)` already computes `let verdict = 'Wrong Answer'` then conditionally overwrites with `'Accepted'`/`'No Expected Cases'`/`'Time Limit Exceeded'`/`'Compile Error'` and uses the value both for the `addSubmission` payload and as part of `lastRun`.", "implication": "The Submit click handler can read the most recent `verdict` from the last `handleRun` call by reading `lastRuns[currentSlug].verdict`, but a simpler alternative is to expose `verdict` as a small piece of component state set at the end of handleRun. Either avoids re-running the worker." },
+    { "id": "edge.noMixedUndefinedNullTests", "area": "tests", "finding": "No test in the repo compares arrays/objects where `undefined` and `null` appear in equivalent positions. The only deepEq-relevant trace assertions in `sandboxE2E.test.ts` (lines 192-200) check literal `'-> undefined'` strings in `safeOut` traces — these are display-only and unaffected by a deepEq change.", "implication": "Adding a new test for `[undefined, 4, undefined]` vs `[null, 4, null]` via the worker runner has no existing test that would now fail spuriously." }
+  ],
+  "requiredMaterials": [],
+  "phases": [
+    {
+      "id": "P1",
+      "order": 1,
+      "name": "Make the runner treat undefined positions as null",
+      "rationale": "When user code returns an array containing `undefined` (typical with `Promise.allSettled`, where `d.value` is `undefined` for rejected promises), the worker `deepEq` rejects it as not equal to the expected `null`, even though `safeOut` — the same module's output-rendering helper — renders both as `null` via `JSON.stringify`. Result: solutions the user can plainly see match the expected output are still graded wrong. The class-mode path already normalizes method-return `undefined` to `null` (line 356), so this only needs to land for `runFn`. The fix is narrow and self-contained: a normalization step between raw user output and the existing comparison.",
+      "filesAffected": [
+        "src/infrastructure/sandbox.worker.ts",
+        "src/infrastructure/sandboxDeepEq.test.ts (new)"
+      ],
+      "changes": [
+        "Add a small `normalizeUndefinedForJson` helper near `deepEq` (around line 56 of sandbox.worker.ts) that recursively walks arrays and plain objects and converts each `undefined` slot/key value to `null`, matching `JSON.stringify`'s behavior. Top-level primitives and class instance values pass through untouched.",
+        "In `runFn` (line 269), apply the helper to `out` only — not to `c.expected` — just before `deepEq(out, c.expected)`: `const pass = hasExp ? deepEq(normalizeUndefinedForJson(out), c.expected) : null`. Leave the `safeOut(out)` call below it untouched so the displayed `output` field still shows the literal `undefined` (preserving the existing diagnostic shape for unbroken cases).",
+        "Do not touch `runClass` — line 356 already normalizes `undefined -> null` for method returns, and `c.expected` is the trusted author-supplied reference, so no recursive walk is needed there.",
+        "Add a new test file `src/infrastructure/sandboxDeepEq.test.ts` modeled on `sandboxE2E.test.ts`'s onmessage-capture pattern (loads `sandbox.worker.ts`, posts a synthetic RunMsg, inspects the `case` messages). Cover at minimum: (a) user code returning `[undefined, 4, undefined]` against `expected = [null, 4, null]` produces `pass: true`; (b) user code returning `4` against `expected = null` still produces `pass: false`; (c) a NaN case (e.g. `expected = [NaN]` vs `out = [NaN]`) still passes (deepEq NaN handling is preserved)."
+      ],
+      "goal": "Stop the runner from failing solutions whose values JSON-normalize to the expected.",
+      "expectedResult": "`src/infrastructure/sandboxDeepEq.test.ts` exists; `npm test` is green; existing test suite (`vitest run`) passes unchanged; `tsc -b` and `vite build` stay green; at least one worker-driven test exercises `out = [undefined, 4, undefined]` against `expected = [null, 4, null]` and reports `pass: true`.",
+      "boundedContext": "judge",
+      "layer": "infrastructure",
+      "blastRadius": "small",
+      "dependsOn": [],
+      "compensation": null,
+      "inputs": [
+        { "name": "src/infrastructure/sandbox.worker.ts", "kind": "file" },
+        { "name": "src/infrastructure/sandboxE2E.test.ts", "kind": "file (precedent for worker tests)" }
+      ],
+      "outputs": [
+        { "name": "src/infrastructure/sandboxDeepEq.test.ts", "kind": "new test file" }
+      ],
+      "rubric": [
+        {
+          "dimensionId": "normalization-matches-json-stringify",
+          "label": "Normalization matches JSON.stringify shape",
+          "weight": 1,
+          "ruleStatement": "The new helper recursively walks arrays and plain-object value slots and replaces `undefined` with `null` only there, matching `JSON.stringify` exactly. It is applied only to `out` (not to `c.expected`) immediately before the `deepEq` call inside `runFn`, and the value rendered by `safeOut` for the diagnostic `output` line is the pre-normalization literal.",
+          "passCriteria": "A worker-driven test posts a RunMsg whose fn returns `[undefined, 4, undefined]` against `expected = [null, 4, null]` and the captured case message reports `pass: true`. The same case's trace line still contains the literal `-> undefined` (or equivalent `safeOut` rendering), proving display was not normalized. Expected values are never passed through the helper.",
+          "failureExamples": [
+            "Helper recurses into array elements but skips object value slots, so `{ a: undefined }` vs `{ a: null }` still fails even though both JSON-stringify to `{\"a\":null}`.",
+            "Helper normalizes both `out` and `c.expected`, masking author-side typos in expected fixtures and breaking the asymmetry between trusted and untrusted inputs.",
+            "Helper mutates `out` in place (e.g., `arr[i] = null`) instead of producing a new value, contaminating the second case of a problem whose input state lingers."
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "blast-radius-limited-to-runFn",
+          "label": "Blast radius limited to runFn",
+          "weight": 1,
+          "ruleStatement": "Only the `runFn` pass comparison is touched. `runClass` keeps its existing `undefined -> null` coercion at line 356 untouched. `safeOut` is not modified, so trace diagnostics and the result panel keep rendering the literal `undefined` token. No other call site of `deepEq` is re-routed through the new helper.",
+          "passCriteria": "`sandboxE2E.test.ts`'s existing assertions about `safeOut` trace lines containing `-> undefined` still pass unchanged. A class-mode run whose method returns `undefined` against `expected = null` still passes through the existing line-356 path, not through the new helper. No additional export is introduced beyond the helper itself, and the helper is referenced exactly once.",
+          "failureExamples": [
+            "Helper is applied at both the `runFn` site and the `runClass` deepEq site, double-normalizing class-mode method returns and creating drift between fn-mode and class-mode display.",
+            "Helper is also passed into `safeOut(out)` to 'keep things consistent', which silently rewrites the displayed `output` field to `null` and breaks every trace assertion that grepped for `-> undefined`.",
+            "Helper is exported and re-used by another future feature in the same PR, expanding the change beyond the phase's stated scope."
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "edge-cases-preserved",
+          "label": "Edge cases preserved (primitives, NaN, sparse, instances)",
+          "weight": 1,
+          "ruleStatement": "Top-level primitive returns (e.g., `4` vs `null`) still fail the comparison. deepEq's `NaN === NaN` semantics are preserved. Sparse-array holes are not invented as `null`. Class-instance and other non-plain-object values pass through the helper untouched. A bare `return undefined` against `expected = null` does not start passing just because the helper exists.",
+          "passCriteria": "Worker-driven test asserts `pass: false` for `out = 4` vs `expected = null`; asserts `pass: true` for `out = [NaN]` vs `expected = [NaN]`; asserts that a sparse root like `[1, ,3]` is not silently filled with `null`. The helper's recursion guards on `Array.isArray` and a plain-object prototype check, and ignores anything else.",
+          "failureExamples": [
+            "Helper normalizes the root value too, so `return undefined` against `expected = null` starts passing when the original semantics should mark it as a wrong answer.",
+            "Helper is implemented via `JSON.parse(JSON.stringify(out))`, which converts `NaN` to `null`, drops `undefined` array holes, and silently rewrites sparse roots — all three regressions land in one move.",
+            "Helper recurses into class instances and converts `instance.foo === undefined` slots into `null`, so a class-mode method that intentionally returns `undefined` for an unset field gets graded as `null` against an expected `undefined`."
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "worker-test-drives-real-pipeline",
+          "label": "Worker-driven test exercises the real pipeline",
+          "weight": 1,
+          "ruleStatement": "The new `sandboxDeepEq.test.ts` loads `sandbox.worker.ts` directly and posts a synthetic RunMsg via the `self.onmessage` capture pattern used by `sandboxE2E.test.ts`, rather than importing `deepEq` or the helper in isolation. The test covers both the kept-passing case and at least two kept-failing cases so a wiring regression that flips a primitive wrong-answer into pass:true is caught.",
+          "passCriteria": "At least three assertions live in the same worker-driven test: (a) `out = [undefined, 4, undefined]` vs `expected = [null, 4, null]` returns `pass: true`; (b) `out = 4` vs `expected = null` returns `pass: false`; (c) `out = [NaN]` vs `expected = [NaN]` returns `pass: true`. The captured messages come from `postMessage`/case events, not from a unit test of the helper.",
+          "failureExamples": [
+            "Test imports `deepEq` and the helper directly and only asserts the helper's return value, so a wiring mistake in `runFn` (helper applied to the wrong argument or not at all) goes undetected.",
+            "Test covers case (a) but omits cases (b) and (c), so a regression that flips `4 vs null` to passing silently passes the new test.",
+            "Test stubs `self.onmessage` and bypasses `postMessage`, so a future refactor that renames the worker message format breaks in production but not in CI."
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "no-existing-regression",
+          "label": "No regression in existing suite or build",
+          "weight": 1,
+          "ruleStatement": "`npm test` (vitest run) is fully green including the pre-existing `sandboxE2E.test.ts`, `sandboxAmbient.test.ts`, and any other infrastructure test. `tsc -b` and `vite build` stay green. No existing assertion is weakened, deleted, or skipped to make the suite pass.",
+          "passCriteria": "`vitest run` reports all pre-existing tests passing without modification; `tsc -b && vite build` exits 0; no test file has a `.skip`, `.todo`, or a relaxed comparison added in this phase.",
+          "failureExamples": [
+            "`sandboxE2E.test.ts` assertion that greps trace lines for `-> undefined` starts failing because the helper was also wired into `safeOut`; the developer then deletes the assertion instead of fixing the wiring.",
+            "An existing test that asserts `pass: false` for a primitive wrong-answer case is softened to `pass: undefined` or `toBeLessThanOrEqual` to silence it after the helper over-normalizes.",
+            "`tsc -b` fails because the helper signature is loose (e.g., `any`) and the developer adds `// @ts-ignore` instead of typing the recursion properly."
+          ],
+          "minScore": 8
+        }
+      ],
+      "healerHint": "Re-read sandbox.worker.ts: safeOut (~line 22), the runFn pass comparison (~line 269), the runClass undefined-to-null coercion (~line 356), and the runClass deepEq call (~line 386). Wire the new helper into exactly one place — between `out` and `deepEq(out, c.expected)` inside runFn — and never pass the normalized value into safeOut or into c.expected. Restrict recursion to Array.isArray and a plain-object prototype check so top-level primitives, NaN, sparse holes, and class instances all pass through. If a `[undefined,4,undefined] vs [null,4,null]` test still fails, the helper is missing or applied to the wrong side; if a `4 vs null` test now incorrectly passes, the helper is over-normalizing the root; if a `[NaN] vs [NaN]` test regresses, the helper is using JSON round-trip — switch to explicit recursion that preserves holes and NaN. Verify by running `npm test` plus `tsc -b && vite build`."
+    },
+    {
+      "id": "P2",
+      "order": 2,
+      "name": "Ask before submitting a run that failed cases",
+      "rationale": "Today the Submit button in `EditorPane.tsx` always calls `handleRun(true)` directly. When the most-recent run's verdict is anything other than `Accepted` — `Wrong Answer`, `Time Limit Exceeded`, `Compile Error`, `No Expected Cases` — the submission lands silently with no deliberate `submit anyway` step. The user has explicitly asked for a confirmation prompt so a non-passing submission is a chosen action, not a mis-click. This is also a natural safety net for the case where Phase 1's normalization is not yet in or has regressed: even if the test report is wrong, the user can decide whether to submit anyway. The pattern is small enough to live inline — no modal portal needed.",
+      "filesAffected": [
+        "src/components/EditorPane.tsx"
+      ],
+      "changes": [
+        "Add local component state `const [pendingSubmit, setPendingSubmit] = useState(false)` next to the existing `busy` / `fmtBusy` hooks.",
+        "Change the Submit `onClick` (around line 314) so it first reads the current verdict: `const last = useAppStore.getState().lastRuns?.[currentSlug]`. If `last` is null/undefined OR `last.verdict === 'Accepted'`, call `handleRun(true)` immediately as today. Otherwise call `setPendingSubmit(true)` and stop.",
+        "Render a small inline confirmation block immediately under the editor-foot toolbar when `pendingSubmit` is true. The block shows the last-run pass/total counts (`Passed {last.passed} / {last.total}` — falls back to `0 / 0` when not yet available) plus two buttons: `Cancel` (clears `pendingSubmit`, no submit) and `Submit anyway` (calls `handleRun(true)` then clears `pendingSubmit`). Mirror the small inline-confirmation pattern from `src/components/ManageProvidersModal.tsx:89` (local useState + a two-stage block, no modal portal, no overlay).",
+        "Clear `pendingSubmit` when `currentSlug` changes (a useEffect on `currentSlug`), and clear it whenever a successful new run starts (`busy` flipping back to `false` after a run that has just set a fresh verdict) — use the existing `lastRun.verdict` change as the trigger.",
+        "If `EditorPane.test.ts` does not exist and `@testing-library/react` is not in `package.json`, do NOT introduce it for this horizon — keep blast radius small. Add at minimum a manual smoke-test note in the phase report: clicking Submit after a Wrong-Answer run opens the block; clicking Submit Anyway invokes `handleRun(true)`; clicking Cancel closes without submitting; switching problems clears the state; an Accepted run never opens the block.",
+        "If the package.json check reveals a DOM test is already in place for EditorPane (it does not today), add at minimum one test covering the predicate path: clicking Submit with verdict `Wrong Answer` opens the block with pass/total counts visible."
+      ],
+      "goal": "Make Submit on a failing run a deliberate choice.",
+      "expectedResult": "After this phase, clicking Submit with `lastRuns[currentSlug]?.verdict === 'Wrong Answer' | 'Time Limit Exceeded' | 'Compile Error' | 'No Expected Cases'` opens an inline confirmation block listing the last-run pass/total counts and two buttons (`Cancel`, `Submit anyway`); clicking `Cancel` closes the block without invoking `handleRun(true)`; clicking `Submit anyway` invokes `handleRun(true)` and closes the block; clicking Submit with `verdict === 'Accepted'` OR no `lastRun` proceeds directly to `handleRun(true)` (no block); the block clears when the problem changes; `tsc -b && vite build` stay green.",
+      "boundedContext": "editor-ui",
+      "layer": "interface",
+      "blastRadius": "small",
+      "dependsOn": [],
+      "compensation": null,
+      "inputs": [
+        { "name": "src/components/EditorPane.tsx", "kind": "file" },
+        { "name": "src/components/ManageProvidersModal.tsx", "kind": "file (precedent for inline confirmation)" },
+        { "name": "src/infrastructure/store.ts", "kind": "file (verdict read path — read-only)" }
+      ],
+      "outputs": [],
+      "rubric": [
+        {
+          "dimensionId": "branch-correctness",
+          "label": "Submit-click branch logic",
+          "weight": 1,
+          "ruleStatement": "Guard against the Submit button doing the wrong thing on each verdict shape — the three-way branch (Accepted → direct submit, non-Accepted → block, no lastRun → safe default) must be exhaustive and read from the current problem's last run at click time, not from a stale closure or a captured handleRun variable.",
+          "passCriteria": "Clicking Submit when lastRuns[currentSlug]?.verdict === 'Accepted' calls handleRun(true) with no block ever rendered; clicking Submit for any of {Wrong Answer, Time Limit Exceeded, Compile Error, No Expected Cases} sets pendingSubmit=true and renders the block; clicking Submit before any run lands in the documented safe default (either opens the block with 0 / 0 or submits directly, but the choice is explicit and consistent); the verdict is read via useAppStore.getState().lastRuns?.[currentSlug]?.verdict inside the onClick, so a problem switch that changes the verdict before the click uses the fresh value.",
+          "failureExamples": [
+            "Reads last.verdict from a local component variable captured during the previous handleRun call, so the block opens (or fails to open) using the previous problem's verdict after switching problems",
+            "Special-cases only 'Wrong Answer' and lets 'Compile Error' and 'Time Limit Exceeded' slip through to a direct submit, missing the user's explicit 'submit problematic cases' requirement",
+            "Treats null lastRuns[currentSlug] as 'no confirmation needed' and submits directly without flagging that the choice was made implicitly",
+            "Uses a useAppStore selector subscription whose closure was captured at mount time, so a problem switch updates the store but the branch decision still uses the old slug"
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "block-content-and-wiring",
+          "label": "Confirmation block content and button wiring",
+          "weight": 1,
+          "ruleStatement": "Guard against the block being a half-built shell — the user must see why they're being asked to confirm, and both buttons must do exactly what their labels say, with no implicit state.",
+          "passCriteria": "The block visibly renders the last-run pass/total in the form 'Passed {last.passed} / {last.total}' (falling back to '0 / 0' only if last is unavailable at render time); Cancel calls setPendingSubmit(false) only and never invokes handleRun; Submit anyway invokes handleRun(true) and then clears pendingSubmit in the same tick; both are real <button type=\"button\"> elements (not <div onClick>) so they are keyboard-reachable; clicking Submit anyway while busy is either disabled or guarded so it cannot double-submit; the block is rendered as a sibling of the editor-foot toolbar, not inside a portal.",
+          "failureExamples": [
+            "Renders the two buttons but forgets the 'Passed X / Y' count, so the user has no context for whether to confirm a near-pass run",
+            "Wires Cancel to handleRun(true) by accident (typo or copy-paste from Submit anyway), inverting the confirmation semantics",
+            "Calls handleRun(true) on Submit anyway but forgets to clear pendingSubmit afterward, leaving the block mounted and re-firing the submit on subsequent clicks",
+            "Uses <div onClick={...}> for the buttons to 'match the inline look', breaking keyboard activation and screen-reader affordance"
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "state-hygiene",
+          "label": "Block state lifecycle (no leaks across problems or runs)",
+          "weight": 1,
+          "ruleStatement": "Guard against the block's open/closed state leaking across problems or surviving the run that should have resolved it.",
+          "passCriteria": "When currentSlug changes, pendingSubmit is reset to false on the next render (via a useEffect on currentSlug or the React-during-render reset pattern used in ManageProvidersModal); when a new run completes (busy transitions false→true→false), the block is closed regardless of whether the run returned Accepted, Wrong Answer, Compile Error, TLE, or threw; switching problems mid-confirmation never triggers an accidental submit; the block is not visible on the new problem's first render even if the previous problem left it open.",
+          "failureExamples": [
+            "Resets pendingSubmit only when Cancel or Submit anyway is clicked, so a problem switch leaves the stale block mounted over the new problem's editor",
+            "Clears pendingSubmit in handleRun's happy path but not in the Compile Error early-return or the TLE catch branch, so failed runs leave the block open after the next run lands",
+            "Adds currentSlug to the component but forgets it in the useEffect dependency array, so the reset never fires under React strict mode",
+            "Tries to clear pendingSubmit inside handleRun after setLastRun, but handleRun is also called from the Submit anyway button — the block closes only when the user is the one who opened it, not when a stale open state happens to coincide"
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "style-consistency",
+          "label": "Style consistency with the inline-confirm precedent",
+          "weight": 1,
+          "ruleStatement": "Guard against introducing a new modal/portal primitive or visual language for one screen — the block must mirror the inline-confirm pattern in ManageProvidersModal.tsx:89 (local useState + two-stage block, no portal, no overlay, no new component file).",
+          "passCriteria": "The block lives inline in EditorPane's JSX (no createPortal, no overlay div, no new <Modal> or <ConfirmDialog> component); uses local useState for the open/closed state; reuses existing button classNames already present in the editor-foot stylesheet (or, if a new class is required, it is a single class added to the existing stylesheet, not a new theme primitive); no new CSS file is introduced; no React portal imports are added to EditorPane; the block visually sits in the same row rhythm as the existing Run Code / Submit buttons.",
+          "failureExamples": [
+            "Reaches for createPortal + a new .modal-overlay div because ManageProvidersModal uses createPortal elsewhere, missing that ManageProvidersModal's line-89 confirmation itself is a plain inline block",
+            "Extracts a generic ConfirmDialog component file to 'reuse later' when only one call site exists today (YAGNI violation, blast radius creep)",
+            "Adds a new confirm-block.css file with bespoke typography instead of reusing the editor-foot button classes that already style adjacent actions",
+            "Imports createPortal from react-dom at the top of EditorPane.tsx for a block that does not need to escape its parent's overflow"
+          ],
+          "minScore": 8
+        },
+        {
+          "dimensionId": "build-and-test-gates",
+          "label": "Build and test pipeline stays green, no scope creep",
+          "weight": 1,
+          "ruleStatement": "Guard against the phase breaking the build pipeline or smuggling in a new test-library dependency that isn't justified by existing test infrastructure.",
+          "passCriteria": "`tsc -b` passes; `vite build` passes; `vitest run` stays green with no pre-existing test file modified or skipped; no new runtime dependency is added; @testing-library/react is NOT added to package.json unless it is already a devDep at the start of the phase (and even then, only if a DOM test is being added); if no DOM test framework is currently in place, the phase adds a manual smoke-test note in the phase report rather than introducing one; no shared type in infrastructure/store.ts is edited (the verdict read path is read-only against the existing selector).",
+          "failureExamples": [
+            "Adds @testing-library/react and @testing-library/dom to package.json devDependencies to write one EditorPane click test, blowing up the blast radius for a horizon that explicitly forbids it",
+            "Mutates the LastRun type in infrastructure/store.ts to add an 'isStale' flag, regressing Drawer.tsx:16 and DescPane which read the same type",
+            "Uses a TypeScript narrowing or default-value pattern that compiles under the dev tsconfig but trips strict mode in CI's tsc -b",
+            "Skips or .skip()s an existing sandbox test to 'keep vitest green' instead of fixing the underlying regression"
+          ],
+          "minScore": 8
+        }
+      ],
+      "healerHint": "Read the verdict via useAppStore.getState().lastRuns?.[currentSlug]?.verdict inside the Submit onClick — never from a closure or a component variable. Mirror the inline useState + two-stage button pattern from ManageProvidersModal.tsx:89 (local useState, no createPortal, no new component file, no overlay). Render 'Passed {passed} / {total}' in the block. Clear pendingSubmit in a useEffect on currentSlug AND in handleRun's finally, so the block closes on problem switches AND on every run completion. Do NOT add @testing-library/react; if you need to verify the flow, add a manual smoke-test note in the phase report instead. Run `tsc -b && vite build && vitest run` after the change."
+    }
+  ],
+  "successCriteria": [
+    "The runner stops failing solutions whose values JSON-normalize to the expected output (the user's `[undefined, 4, undefined]` vs `[null, 4, null]` case now passes).",
+    "The Submit button asks before submitting a run whose most-recent verdict is not `Accepted`, with a clear pass/total count and explicit Cancel / Submit Anyway buttons; the block clears when the problem changes; an `Accepted` run submits directly.",
+    "P1: Make the runner treat undefined positions as null — a worker-driven test posts a RunMsg whose fn returns `[undefined, 4, undefined]` against `expected = [null, 4, null]` and the captured case message reports `pass: true`.",
+    "P2: Ask before submitting a run that failed cases — clicking Submit when lastRuns[currentSlug]?.verdict is anything other than `Accepted` opens the inline block with `Passed X / Y` and two action buttons; clicking `Cancel` closes the block without invoking `handleRun(true)`; clicking `Submit anyway` invokes `handleRun(true)` and closes the block."
+  ],
+  "deferred": [
+    "A broader rewrite of the judge to a richer expectation grammar (matcher-by-matcher, custom comparators per problem, snapshot tests).",
+    "Persisting submissions to a server; current localStorage-based `addSubmission` is unchanged.",
+    "Adding a generic modal/portal primitive or refactoring existing modals (GenerateModal, ImportModal, Drawer) — the new dialog stays local in EditorPane.",
+    "Surfacing the verdict table in a deeper result panel; existing verdict pills/marks are untouched.",
+    "Re-running the fold or autocomplete work from horizon 1; no Discovery entry on those topics mentions any regression.",
+    "Coverage of every rejection-shape corner case (objects with undefined keys, sparse arrays as roots, Promise object identity) — only the demonstrated case (fn-return undefined-in-array) needs to pass.",
+    "Adding @testing-library/react as a devDep just to write a single EditorPane click test (YAGNI — manual smoke-test note covers it for this horizon)."
+  ]
+}

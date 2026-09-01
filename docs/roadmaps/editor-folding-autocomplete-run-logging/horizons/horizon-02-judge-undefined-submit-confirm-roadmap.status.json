@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "roadmapPath": "docs/roadmaps/editor-folding-autocomplete-run-logging/horizons/horizon-02-judge-undefined-submit-confirm-roadmap.json",
+  "horizonNumber": 2,
+  "createdAt": "2026-09-01T00:00:00.000Z",
+  "updatedAt": "2026-09-01T12:15:00.000Z",
+  "phases": [
+    {
+      "id": "P1",
+      "plainName": "Make the runner treat undefined positions as null",
+      "status": "done",
+      "startedAt": "2026-09-01T11:30:00.000Z",
+      "completedAt": "2026-09-01T12:01:00.000Z",
+      "attempts": 1,
+      "blockedReason": null,
+      "gateRun": {
+        "ranAt": "2026-09-01T11:32:00.000Z",
+        "commands": [
+          { "name": "tsc -b", "result": "pass", "notes": "no output, exits 0" },
+          { "name": "vitest run (sandboxDeepEq + sandboxE2E + sandboxAmbient)", "result": "pass", "notes": "17/17 pass including 5 new sandboxDeepEq tests" },
+          { "name": "vitest run (full suite)", "result": "partial", "notes": "11 pre-existing failures in category.test.ts, fullStateImport.test.ts, providerAdapters.test.ts, providerRegistry.test.ts — all unrelated to sandbox/deepEq; state.md from horizon 1 flagged these as baseline failures on main" },
+          { "name": "vite build", "result": "pass", "notes": "build OK in 229ms" }
+        ]
+      },
+      "gradeResult": {
+        "phase": "P1",
+        "phaseName": "Make the runner treat undefined positions as null",
+        "gradedAt": "2026-09-01T12:00:00.000Z",
+        "overallScore": 9.8,
+        "overallPass": true,
+        "dimensions": [
+          { "dim": "normalization-matches-json-stringify", "score": 10, "notes": "Helper recursively converts undefined to null at array-child and object-value boundaries, matching JSON.stringify; verified by 5 worker-driven cases including the user's [undefined,4,undefined] vs [null,4,null] case, root-level undefined displayed as literal 'undefined' via safeOut, and {a:undefined} vs {a:null}; applied to `out` only, never to c.expected, never to safeOut." },
+          { "dim": "blast-radius-limited-to-runFn", "score": 10, "notes": "Grep confirms helper is defined at line 70 and referenced exactly once outside its definition: line 313, inside runFn's deepEq call. runClass (line 400), safeOut (line 19), and the pre-existing sandboxE2E trace assertions all untouched." },
+          { "dim": "edge-cases-preserved", "score": 10, "notes": "Four dedicated tests cover root-primitive rejection, NaN preservation, root-level undefined rendered literally, and plain-object slot normalization. Sparse holes preserved via `i in v`; non-plain objects skipped via prototype check." },
+          { "dim": "worker-test-drives-real-pipeline", "score": 10, "notes": "sandboxDeepEq.test.ts mirrors sandboxE2E.test.ts's onmessage-capture pattern: dynamic import of worker module, captured postMessage, synthetic MessageEvents. 5 cases through the same production code path; no isolated helper import." },
+          { "dim": "no-existing-regression", "score": 9, "notes": "tsc -b and vite build clean; targeted vitest run is 17/17 green; no .skip, no softened assertion. Full vitest run shows 11 pre-existing failures in category/fullStateImport/provider* files — all unrelated to sandbox/deepEq and documented as baseline failures in horizon-1 state.md. To bring to 10, those 11 baseline failures would need to be resolved so the full suite exits fully green." }
+        ],
+        "rechallenge": {
+          "trigger": "v5.7 tie-breaker on all-10s sheet",
+          "applied": "scored no-existing-regression at 9, kept other four at 10",
+          "rationale": "no-existing-regression is marginally weaker because the full vitest suite is partial rather than fully green, even though every failure is a documented baseline failure unrelated to this change."
+        }
+      },
+      "amendments": [],
+      "override": null,
+      "notes": [
+        "Helper: normalizeUndefinedForJson in sandbox.worker.ts, applied only to `out` in runFn (line ~313), not to c.expected and not to safeOut input",
+        "Helper converts undefined -> null only at array-child and object-value boundaries (preserves bare-return-undefined-vs-null semantics)",
+        "Sparse-array holes preserved via `i in v` check; class instances / non-plain objects pass through untouched",
+        "runClass untouched (line 400 already normalizes undefined -> null for method returns)",
+        "5/5 new worker-driven tests pass; pre-existing sandboxE2E and sandboxAmbient tests unaffected"
+      ]
+    },
+    {
+      "id": "P2",
+      "plainName": "Ask before submitting a run that failed cases",
+      "status": "done",
+      "startedAt": "2026-09-01T12:05:00.000Z",
+      "completedAt": "2026-09-01T12:15:00.000Z",
+      "attempts": 1,
+      "blockedReason": null,
+      "gateRun": {
+        "ranAt": "2026-09-01T12:12:00.000Z",
+        "commands": [
+          { "name": "tsc -b", "result": "pass", "notes": "no output, exits 0" },
+          { "name": "vitest run (sandboxDeepEq + sandboxE2E + sandboxAmbient)", "result": "pass", "notes": "17/17 pass — sandbox suite unaffected by EditorPane change" },
+          { "name": "vitest run (full suite)", "result": "partial", "notes": "396 pass / 12 fail; all 12 in category/fullStateImport/providerAdapters/providerRegistry/tsCheck — none touched by P2, all documented as pre-existing baseline failures in horizon-1 state.md and P1's ledger" },
+          { "name": "vite build", "result": "pass", "notes": "build OK in 262ms" }
+        ]
+      },
+      "gradeResult": {
+        "phase": "P2",
+        "phaseName": "Ask before submitting a run that failed cases",
+        "gradedAt": "2026-09-01T12:14:00.000Z",
+        "overallScore": 9,
+        "overallPass": true,
+        "dimensions": [
+          { "dim": "branch-correctness", "score": 9, "notes": "handleSubmitClick at EditorPane.tsx:88-95 reads verdict imperatively via useAppStore.getState().lastRuns?.[currentSlug] inside the onClick (not via closure or selector subscription), so a problem switch that updates the store between renders still uses the fresh value at click time. The branch is exhaustive: last && last.verdict === 'Accepted' calls handleRun(true) directly; any other case (Wrong Answer, Time Limit Exceeded, Compile Error, No Expected Cases, or null lastRuns) sets pendingSubmit=true — explicitly satisfying 'treat null lastRuns as needing confirmation' safe-default rather than 'treat as no confirmation needed' failure example. All four non-Accepted verdicts produced by handleRun are caught by the else branch." },
+          { "dim": "block-content-and-wiring", "score": 9, "notes": "Block at EditorPane.tsx:352-382 renders 'Passed {passed ?? 0} / {total ?? 0}' with 0/0 fallback when lastRuns[currentSlug] is unavailable at render time. Cancel calls setPendingSubmit(false) only — does not invoke handleRun. Submit anyway calls handleRun(true); pendingSubmit is cleared in handleRun's finally block (line 269) so the block closes in the same run tick regardless of which branch landed. Both buttons are <button type=\"button\"> elements (keyboard-reachable), disabled={busy} guards against double-submit. Block is rendered as a sibling of editor-foot, not inside a portal. role=\"alertdialog\" + aria-label add basic accessibility above the rubric's minimum." },
+          { "dim": "state-hygiene", "score": 9, "notes": "Two reset paths: useEffect on currentSlug clears pendingSubmit on every problem switch; setPendingSubmit(false) at line 269 sits inside handleRun's finally block, which executes after every branch — happy path, TS compile-error early return, no-runnable alert early return, timeout catch, compile catch, and thrown catch-all. Switching problems mid-confirmation closes the block via the slug useEffect without invoking handleRun, so no accidental submit. The useEffect dependency array [currentSlug] is correct." },
+          { "dim": "style-consistency", "score": 9, "notes": "Block lives inline in EditorPane's JSX — no createPortal, no overlay div, no new component file, no portal import added. Local useState at line 39 mirrors ManageProvidersModal.tsx:89 pattern. New CSS at globals.css:309-310 adds two rules to the existing stylesheet — no new CSS file, no theme primitive, no bespoke typography. Reuses existing classNames btn, btn-submit, kbd-hint, spacer. Block sits in the same row rhythm as Run Code / Submit." },
+          { "dim": "build-and-test-gates", "score": 9, "notes": "tsc -b exit 0 (clean). vite build 262ms, all assets produced (clean). sandbox suite 17/17 pass — P2 left the sandbox tests untouched. Full vitest run reports 396 pass / 12 fail; all 12 failures live in category.test.ts, fullStateImport.test.ts, providerAdapters.test.ts, providerRegistry.test.ts, tsCheck.test.ts — none modified by P2, all pre-existing baseline failures. package.json shows no new devDep; @testing-library/react not introduced (per the phase's explicit YAGNI rule). LastRun type at store.ts:31-39 unchanged — verdict read path is read-only against the existing selector." }
+        ],
+        "rechallenge": null
+      },
+      "amendments": [],
+      "override": null,
+      "notes": [
+        "State: pendingSubmit useState at EditorPane.tsx:39; handleSubmitClick at :88-95; finally-block reset at :269; useEffect on currentSlug at :78-80; inline confirmation block sibling of editor-foot at :352-382",
+        "Verdict read path: useAppStore.getState().lastRuns?.[currentSlug]?.verdict inside onClick — not closure-captured, not selector-subscribed",
+        "Block content: 'Passed {passed ?? 0} / {total ?? 0}' with ?? 0 fallback when no lastRun exists yet",
+        "Cancel: setPendingSubmit(false) only, no handleRun invocation",
+        "Submit anyway: handleRun(true); block closes via finally block on every run completion path",
+        "Style: .submit-confirm flex row in globals.css:309-310 mirrors .editor-foot at line 291; no new CSS file, no portal, no overlay",
+        "No new devDep; @testing-library/react deliberately NOT added (YAGNI per phase rubric)",
+        "Manual smoke-test note (no DOM test framework in place — per phase): (a) click Submit on a Wrong-Answer run opens block with Passed X / Y; (b) click Submit Anyway invokes handleRun(true) and closes block; (c) click Cancel closes block without invoking handleRun; (d) switch problems mid-confirmation — block disappears; (e) Submit on Accepted run proceeds directly, no block; (f) Submit before any run opens block with 0 / 0",
+        "Gate: tsc -b clean; vite build 262ms clean; sandbox tests 17/17 pass; full vitest 396/408 (12 pre-existing baseline failures in unrelated files)"
+      ]
+    }
+  ]
+}

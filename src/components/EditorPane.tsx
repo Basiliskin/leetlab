@@ -31,6 +31,12 @@ export function EditorPane() {
   const [fmtBusy, setFmtBusy] = useState(false);
   const [fmtMsg, setFmtMsg] = useState<string | null>(null);
   const fmtTimer = useRef<number | null>(null);
+  // Submit guard: when true, an inline confirmation block is mounted under the
+  // editor-foot toolbar so the user must explicitly choose Cancel or Submit
+  // anyway before a non-Accepted run is submitted. Mirrors the inline
+  // useState + two-stage block pattern from ManageProvidersModal.tsx:89 —
+  // local state, no portal, no overlay.
+  const [pendingSubmit, setPendingSubmit] = useState(false);
   const setLastRun = useAppStore((s) => s.setLastRun);
   const setTsStatus = useAppStore((s) => s.setTsStatus);
 
@@ -66,6 +72,27 @@ export function EditorPane() {
       setTsStatus(tsCompiler.ready ? "ready" : "fallback");
     });
   }, [setTsStatus]);
+
+  // Reset the submit-confirmation block whenever the user switches problems,
+  // so a stale block from the previous problem cannot leak over the new one.
+  useEffect(() => {
+    setPendingSubmit(false);
+  }, [currentSlug]);
+
+  // Submit-click branch: read the most recent verdict for THIS problem from
+  // the store imperatively (not via a closure-captured variable) so a problem
+  // switch that changes the verdict before the click uses the fresh value.
+  // Accepted → submit directly. Anything else (Wrong Answer, TLE, Compile
+  // Error, No Expected Cases, or no lastRun at all) → open the inline
+  // confirmation block with the last-run pass/total counts (0/0 fallback).
+  function handleSubmitClick() {
+    const last = useAppStore.getState().lastRuns?.[currentSlug];
+    if (last && last.verdict === "Accepted") {
+      handleRun(true);
+    } else {
+      setPendingSubmit(true);
+    }
+  }
 
   async function handleRun(isSubmit: boolean) {
     if (busy) return;
@@ -236,6 +263,10 @@ export function EditorPane() {
       }
     } finally {
       setBusy(false);
+      // Always close the submit-confirmation block when a run resolves,
+      // regardless of which branch (Accepted, Wrong Answer, Compile Error,
+      // TLE, or thrown) it landed in.
+      setPendingSubmit(false);
     }
   }
 
@@ -311,13 +342,44 @@ export function EditorPane() {
         </button>
         <button
           className={`btn btn-submit ${busy ? "busy" : ""}`}
-          onClick={() => handleRun(true)}
+          onClick={handleSubmitClick}
           disabled={busy}
         >
           <span className="spin" />
           Submit
         </button>
       </div>
+      {pendingSubmit && (
+        <div
+          className="submit-confirm"
+          role="alertdialog"
+          aria-label="Confirm submission"
+        >
+          <span className="kbd-hint">
+            Passed{" "}
+            {useAppStore.getState().lastRuns?.[currentSlug]?.passed ?? 0}
+            {" / "}
+            {useAppStore.getState().lastRuns?.[currentSlug]?.total ?? 0}
+          </span>
+          <div className="spacer" />
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setPendingSubmit(false)}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-submit"
+            onClick={() => handleRun(true)}
+            disabled={busy}
+          >
+            Submit anyway
+          </button>
+        </div>
+      )}
     </div>
   );
 }

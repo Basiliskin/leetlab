@@ -54,6 +54,50 @@ function deepEq(a: unknown, b: unknown): boolean {
   return true
 }
 
+// Match JSON.stringify's collapse of `undefined` slots/values to `null` so
+// the worker's equality check agrees with what the user sees in the result
+// panel. Applied to `out` only, immediately before `deepEq`, never to
+// `c.expected` (trusted author input) and never to the value passed into
+// `safeOut` (diagnostics keep the literal token).
+//
+// Recursion is restricted to plain objects and arrays:
+//   - top-level primitives (including `undefined`) pass through unchanged,
+//     so a bare `return undefined` vs `expected = null` still fails;
+//   - sparse-array holes are preserved (no silent `null` fill);
+//   - class instances and other non-plain objects pass through, so a
+//     class-mode method that intentionally returns `undefined` for an
+//     unset field is graded against the literal `undefined`.
+function normalizeUndefinedForJson(v: unknown): unknown {
+  if (v === null || typeof v !== 'object') return v
+  if (
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(v) !== Object.prototype &&
+    Object.getPrototypeOf(v) !== null
+  )
+    return v
+  if (Array.isArray(v)) {
+    const out: unknown[] = new Array(v.length)
+    for (let i = 0; i < v.length; i++) {
+      if (!(i in v)) continue
+      const child = (v as unknown[])[i]
+      // Collapse `undefined` slots to `null` to match JSON.stringify,
+      // but only at the array-child boundary — a top-level `return
+      // undefined` vs `expected = null` must keep failing.
+      out[i] = child === undefined ? null : normalizeUndefinedForJson(child)
+    }
+    return out
+  }
+  const src = v as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(src)) {
+    const child = src[k]
+    // Same collapse at the object-value boundary; object keys themselves
+    // are never `undefined` so no key-level rewrite is needed.
+    out[k] = child === undefined ? null : normalizeUndefinedForJson(child)
+  }
+  return out
+}
+
 function errInfo(e: unknown) {
   return {
     name: (e && (e as Error).name) || 'Error',
@@ -266,7 +310,7 @@ async function runFn(fn: unknown, m: RunMsg) {
       const out = isThenable(raw) ? await raw : raw
       const ms = performance.now() - t0
       const hasExp = Object.prototype.hasOwnProperty.call(c, 'expected')
-      const pass = hasExp ? deepEq(out, c.expected) : null
+      const pass = hasExp ? deepEq(normalizeUndefinedForJson(out), c.expected) : null
       if (hasExp && !pass) {
         returnHints(out, c.expected, m.name).forEach(judgeWarn)
       }
