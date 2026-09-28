@@ -11,3 +11,8 @@ timestamp=$(date +%Y-%m-%d) && git archive --format=zip --output="../leetlab-$ti
 # debug
 
 pnpm dev
+
+# To deploy, run these in the prompt:
+
+! npx wrangler login
+! npm run deploy
