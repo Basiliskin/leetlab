@@ -19,6 +19,8 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const setCategory = useAppStore((s) => s.setCategory);
   const setSearch = useAppStore((s) => s.setSearch);
   const problems = useAppStore((s) => s.problems);
+  const collapsed = useAppStore((s) => s.collapsed.sidebar);
+  const toggleCollapsed = useAppStore((s) => s.toggleCollapsed);
 
   const counts = {
     All: bank.length,
@@ -64,9 +66,30 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   });
 
   return (
-    <aside className={`sidebar ${open ? "open" : ""}`}>
+    <aside
+      className={`sidebar ${open ? "open" : ""} ${collapsed ? "collapsed" : ""}`}
+    >
+      <button
+        className="rail-btn"
+        onClick={() => toggleCollapsed("sidebar")}
+        title="Show problem list"
+        aria-label="Show problem list"
+      >
+        <span className="rail-ico">»</span>
+        <span className="rail-label">Problems</span>
+      </button>
       <div className="side-head">
-        <h2>Problem Set</h2>
+        <div className="pane-head-row">
+          <h2>Problem Set</h2>
+          <button
+            className="collapse-btn"
+            onClick={() => toggleCollapsed("sidebar")}
+            title="Hide problem list"
+            aria-label="Hide problem list"
+          >
+            «
+          </button>
+        </div>
         <div className="search">
           <input
             value={search}

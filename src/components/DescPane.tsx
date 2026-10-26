@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useAppStore } from "../infrastructure/store";
 
 export function DescPane() {
@@ -5,21 +6,52 @@ export function DescPane() {
   const getProblem = useAppStore((s) => s.getProblem);
   const solvedAt = useAppStore((s) => s.problems[currentSlug]?.solvedAt);
   const subs = useAppStore((s) => s.problems[currentSlug]?.subs) ?? [];
+  const collapsed = useAppStore((s) => s.collapsed.desc);
+  const toggleCollapsed = useAppStore((s) => s.toggleCollapsed);
+  const [tab, setTab] = useState<"desc" | "subs">("desc");
 
   const p = getProblem(currentSlug);
   const reversed = subs.slice().reverse();
 
   return (
-    <section className="pane desc-pane" id="descPane">
+    <section
+      className={`pane desc-pane ${collapsed ? "collapsed" : ""}`}
+      id="descPane"
+    >
+      <button
+        className="rail-btn"
+        onClick={() => toggleCollapsed("desc")}
+        title="Show description"
+        aria-label="Show description"
+      >
+        <span className="rail-ico">»</span>
+        <span className="rail-label">Description</span>
+      </button>
       <div className="pane-tabs">
-        <button className="ptab on" id="tabDesc">
+        <button
+          className={`ptab ${tab === "desc" ? "on" : ""}`}
+          id="tabDesc"
+          onClick={() => setTab("desc")}
+        >
           Description
         </button>
-        <button className="ptab" id="tabSubs">
+        <button
+          className={`ptab ${tab === "subs" ? "on" : ""}`}
+          id="tabSubs"
+          onClick={() => setTab("subs")}
+        >
           Submissions <span className="badge">{subs.length}</span>
         </button>
+        <button
+          className="collapse-btn"
+          onClick={() => toggleCollapsed("desc")}
+          title="Hide description"
+          aria-label="Hide description"
+        >
+          «
+        </button>
       </div>
-      <div className="pane-scroll" id="descView">
+      <div className="pane-scroll" id="descView" hidden={tab !== "desc"}>
         <div className="desc-body" id="descBody">
           {p ? (
             <>
@@ -51,7 +83,7 @@ export function DescPane() {
           )}
         </div>
       </div>
-      <div className="pane-scroll" id="subsView" hidden>
+      <div className="pane-scroll" id="subsView" hidden={tab !== "subs"}>
         <div className="subs">
           {reversed.length ? (
             <table>

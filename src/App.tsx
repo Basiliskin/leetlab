@@ -6,6 +6,7 @@ import { DescPane } from "@components/DescPane";
 import { Drawer } from "@components/Drawer";
 import { StatusBar } from "@components/StatusBar";
 import { initVisualViewport } from "./infrastructure/visualViewport";
+import { useAppStore } from "@infra/store";
 import "./styles/globals.css";
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
   const [mobileDescOpen, setMobileDescOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeNav = () => setMobileNavOpen(false);
+  const descCollapsed = useAppStore((s) => s.collapsed.desc);
 
   return (
     <>
@@ -40,7 +42,9 @@ export function App() {
         {mobileNavOpen && (
           <div className="sidebar-backdrop" onClick={closeNav} />
         )}
-        <main className={`workspace ${mobileDescOpen ? "desc-open" : ""}`}>
+        <main
+          className={`workspace ${mobileDescOpen ? "desc-open" : ""} ${descCollapsed ? "desc-collapsed" : ""}`}
+        >
           <div className="mobile-tabs">
             <button
               className={`ptab ${!mobileDescOpen ? "on" : ""}`}

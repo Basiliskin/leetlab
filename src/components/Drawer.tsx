@@ -16,9 +16,11 @@ export function Drawer() {
   const lastRun = useAppStore((s) => (s.lastRuns || {})[currentSlug] || null);
   const activeTab = useAppStore((s) => s.activeResultTab);
   const setActiveTab = useAppStore((s) => s.setActiveResultTab);
+  const collapsed = useAppStore((s) => s.collapsed.drawer);
+  const toggleCollapsed = useAppStore((s) => s.toggleCollapsed);
 
   return (
-    <div className="drawer">
+    <div className={`drawer ${collapsed ? "collapsed" : ""}`}>
       <div className="pane-tabs">
         <button
           className={`ptab ${activeTab === "test" ? "on" : ""}`}
@@ -46,6 +48,15 @@ export function Drawer() {
           <span className="badge" hidden={!(lastRun && lastRun.logs && lastRun.logs.length)}>
             {lastRun && lastRun.logs ? lastRun.logs.length : ""}
           </span>
+        </button>
+        <button
+          className="collapse-btn"
+          onClick={() => toggleCollapsed("drawer")}
+          title={collapsed ? "Show test panel" : "Hide test panel"}
+          aria-label={collapsed ? "Show test panel" : "Hide test panel"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? "▴" : "▾"}
         </button>
       </div>
       <div className="drawer-body">

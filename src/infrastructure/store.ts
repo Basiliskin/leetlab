@@ -46,12 +46,20 @@ export interface ProblemState {
   solvedAt: number | null
 }
 
+export interface CollapsedPanels {
+  sidebar: boolean
+  desc: boolean
+  drawer: boolean
+}
+
 interface AppState {
   lang: 'js' | 'ts'
   split: number
   lastSlug: string
   problems: Record<string, ProblemState>
   generatedProblems: Problem[]
+  // Which layout panels the user has collapsed (desktop/tablet layout).
+  collapsed: CollapsedPanels
 
   // In-memory only — a validated generated problem awaiting review (Phase 5).
   // Deliberately NOT in partialize: it never reaches localStorage, so a
@@ -101,6 +109,7 @@ interface AppState {
   // which tab is active in the testcases/result drawer
   activeResultTab: 'test' | 'result' | 'console'
   setActiveResultTab: (tab: 'test' | 'result' | 'console') => void
+  toggleCollapsed: (panel: keyof CollapsedPanels) => void
 }
 
 const defaultProblemState = (): ProblemState => ({
@@ -212,6 +221,7 @@ export const useAppStore = create<AppState>()(
       lastSlug: PROBLEM_BANK[0].slug,
       problems: {},
       generatedProblems: [],
+      collapsed: { sidebar: false, desc: false, drawer: false },
       pendingGenerated: null,
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
@@ -383,7 +393,17 @@ export const useAppStore = create<AppState>()(
 
         // which tab is active in the testcases/result drawer
         activeResultTab: 'test',
-        setActiveResultTab: (tab) => set({ activeResultTab: tab }),
+        // Picking a drawer tab (or a run switching to Result) always
+        // re-opens a collapsed drawer so the output is never hidden.
+        setActiveResultTab: (tab) =>
+          set((s) => ({
+            activeResultTab: tab,
+            collapsed: { ...s.collapsed, drawer: false },
+          })),
+        toggleCollapsed: (panel) =>
+          set((s) => ({
+            collapsed: { ...s.collapsed, [panel]: !s.collapsed[panel] },
+          })),
     }),
     {
       name: 'leetlab.v2',
@@ -400,6 +420,8 @@ export const useAppStore = create<AppState>()(
         lastSlug: state.lastSlug,
         problems: state.problems,
         generatedProblems: state.generatedProblems,
+        // Additive with a safe default (all expanded) — stays on leetlab.v2.
+        collapsed: state.collapsed,
       }),
     }
   )
