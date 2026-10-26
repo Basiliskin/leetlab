@@ -3,7 +3,6 @@ import { Topbar } from "@components/Topbar";
 import { Sidebar } from "@components/Sidebar";
 import { EditorPane } from "@components/EditorPane";
 import { DescPane } from "@components/DescPane";
-import { Drawer } from "@components/Drawer";
 import { StatusBar } from "@components/StatusBar";
 import { initVisualViewport } from "./infrastructure/visualViewport";
 import { useAppStore } from "@infra/store";
@@ -22,7 +21,10 @@ export function App() {
   // sidebar is reached through a slide-in drawer. On desktop the flags are
   // inert (the CSS that reacts to `.desc-open` / `.sidebar.open` is
   // phone-scoped), and the workspace keeps the split layout regardless.
-  const [mobileDescOpen, setMobileDescOpen] = useState(false);
+  // The description-overlay flag lives in the store so a run can open it to
+  // show the Result tab.
+  const mobileDescOpen = useAppStore((s) => s.mobileDescOpen);
+  const setMobileDescOpen = useAppStore((s) => s.setMobileDescOpen);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeNav = () => setMobileNavOpen(false);
   const descCollapsed = useAppStore((s) => s.collapsed.desc);
@@ -56,14 +58,13 @@ export function App() {
               className={`ptab ${mobileDescOpen ? "on" : ""}`}
               onClick={() => setMobileDescOpen(true)}
             >
-              Description
+              Problem · Tests
             </button>
           </div>
           <DescPane />
           <div className="divider" />
           <section className="pane editor-pane">
             <EditorPane />
-            <Drawer />
           </section>
         </main>
       </div>

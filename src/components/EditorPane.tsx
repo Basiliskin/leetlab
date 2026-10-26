@@ -94,6 +94,31 @@ export function EditorPane() {
     }
   }
 
+  // Keyboard shortcuts advertised in the footer: Ctrl/⌘+Enter runs,
+  // Ctrl/⌘+Shift+Enter submits. Captured on window ahead of CodeMirror
+  // (whose default keymap binds Mod-Enter to insertBlankLine). The ref keeps
+  // the listener registered once while always calling the latest handlers.
+  const shortcutRef = useRef({ run: () => {}, submit: () => {} });
+  useEffect(() => {
+    shortcutRef.current = {
+      run: () => void handleRun(false),
+      submit: handleSubmitClick,
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      // Leave modals (generate/import/help) to their own key handling.
+      if (document.querySelector(".modal-overlay")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) shortcutRef.current.submit();
+      else shortcutRef.current.run();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   async function handleRun(isSubmit: boolean) {
     if (busy) return;
     runCounter = 0;
@@ -121,7 +146,7 @@ export function EditorPane() {
             total: 0,
             ms: null,
           });
-          useAppStore.getState().setActiveResultTab("result");
+          useAppStore.getState().setActivePaneTab("result");
           setBusy(false);
           return;
         }
@@ -180,7 +205,7 @@ export function EditorPane() {
       const lastRun: LastRun = { results, logs, verdict, passed, total, ms };
       setLastRun(currentSlug, lastRun);
       logRun(lastRun);
-      useAppStore.getState().setActiveResultTab("result");
+      useAppStore.getState().setActivePaneTab("result");
 
       if (isSubmit && verdict === "Accepted") {
         useAppStore.getState().markSolved();
@@ -227,7 +252,7 @@ export function EditorPane() {
         };
         setLastRun(currentSlug, lastRun);
         logRun(lastRun);
-        useAppStore.getState().setActiveResultTab("result");
+        useAppStore.getState().setActivePaneTab("result");
 
         if (isSubmit) {
           useAppStore.getState().addSubmission({
@@ -253,7 +278,7 @@ export function EditorPane() {
         };
         setLastRun(currentSlug, lastRun);
         logRun(lastRun);
-        useAppStore.getState().setActiveResultTab("result");
+        useAppStore.getState().setActivePaneTab("result");
       } else {
         console.error(e);
         alert(

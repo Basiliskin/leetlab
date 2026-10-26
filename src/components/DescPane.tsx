@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { useAppStore } from "../infrastructure/store";
+import { useEffect, useRef } from "react";
+import { useAppStore, type PaneTab } from "../infrastructure/store";
+import { RunViews } from "./RunViews";
 
 export function DescPane() {
   const currentSlug = useAppStore((s) => s.currentSlug);
@@ -8,7 +9,33 @@ export function DescPane() {
   const subs = useAppStore((s) => s.problems[currentSlug]?.subs) ?? [];
   const collapsed = useAppStore((s) => s.collapsed.desc);
   const toggleCollapsed = useAppStore((s) => s.toggleCollapsed);
-  const [tab, setTab] = useState<"desc" | "subs">("desc");
+  const tab = useAppStore((s) => s.activePaneTab);
+  const setTab = useAppStore((s) => s.setActivePaneTab);
+  const lastRun = useAppStore((s) => s.lastRuns?.[currentSlug] ?? null);
+  const logCount = lastRun?.logs?.length ?? 0;
+
+  // Five tabs can overflow a narrow pane (the bar scrolls horizontally);
+  // keep the active one in view, e.g. when a run jumps to Result (re-run
+  // once the result lands, since its badge widens the tab).
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [tab, lastRun]);
+
+  const tabs: { id: PaneTab; label: string; badge?: string | number }[] = [
+    { id: "desc", label: "Description" },
+    { id: "subs", label: "Submissions", badge: subs.length },
+    { id: "test", label: "Testcases" },
+    {
+      id: "result",
+      label: "Result",
+      badge: lastRun ? `${lastRun.passed}/${lastRun.total}` : undefined,
+    },
+    { id: "console", label: "Console", badge: logCount || undefined },
+  ];
 
   const p = getProblem(currentSlug);
   const reversed = subs.slice().reverse();
@@ -21,32 +48,33 @@ export function DescPane() {
       <button
         className="rail-btn"
         onClick={() => toggleCollapsed("desc")}
-        title="Show description"
-        aria-label="Show description"
+        title="Show problem pane"
+        aria-label="Show problem pane"
       >
         <span className="rail-ico">»</span>
-        <span className="rail-label">Description</span>
+        <span className="rail-label">Problem · Tests</span>
       </button>
       <div className="pane-tabs">
-        <button
-          className={`ptab ${tab === "desc" ? "on" : ""}`}
-          id="tabDesc"
-          onClick={() => setTab("desc")}
-        >
-          Description
-        </button>
-        <button
-          className={`ptab ${tab === "subs" ? "on" : ""}`}
-          id="tabSubs"
-          onClick={() => setTab("subs")}
-        >
-          Submissions <span className="badge">{subs.length}</span>
-        </button>
+        <div className="tabs-scroll">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              ref={tab === t.id ? activeTabRef : undefined}
+              className={`ptab ${tab === t.id ? "on" : ""}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {t.badge !== undefined ? (
+                <span className="badge">{t.badge}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
         <button
           className="collapse-btn"
           onClick={() => toggleCollapsed("desc")}
-          title="Hide description"
-          aria-label="Hide description"
+          title="Hide problem pane"
+          aria-label="Hide problem pane"
         >
           «
         </button>
@@ -129,6 +157,7 @@ export function DescPane() {
           )}
         </div>
       </div>
+      <RunViews />
     </section>
   );
 }

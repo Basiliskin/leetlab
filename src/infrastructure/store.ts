@@ -49,8 +49,11 @@ export interface ProblemState {
 export interface CollapsedPanels {
   sidebar: boolean
   desc: boolean
-  drawer: boolean
 }
+
+// Tabs of the left "problem" pane: the description and submission history,
+// plus the test-case editor, run results and console output.
+export type PaneTab = 'desc' | 'subs' | 'test' | 'result' | 'console'
 
 interface AppState {
   lang: 'js' | 'ts'
@@ -106,9 +109,13 @@ interface AppState {
   // typescript compiler status
   tsStatus?: string
   setTsStatus: (st: string) => void
-  // which tab is active in the testcases/result drawer
-  activeResultTab: 'test' | 'result' | 'console'
-  setActiveResultTab: (tab: 'test' | 'result' | 'console') => void
+  // which tab is active in the problem pane (description … console)
+  activePaneTab: PaneTab
+  setActivePaneTab: (tab: PaneTab) => void
+  // Phone layout only: whether the problem pane overlays the editor.
+  // In-memory, not persisted; inert on wider layouts.
+  mobileDescOpen: boolean
+  setMobileDescOpen: (open: boolean) => void
   toggleCollapsed: (panel: keyof CollapsedPanels) => void
 }
 
@@ -221,7 +228,7 @@ export const useAppStore = create<AppState>()(
       lastSlug: PROBLEM_BANK[0].slug,
       problems: {},
       generatedProblems: [],
-      collapsed: { sidebar: false, desc: false, drawer: false },
+      collapsed: { sidebar: false, desc: false },
       pendingGenerated: null,
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
@@ -392,14 +399,18 @@ export const useAppStore = create<AppState>()(
         setTsStatus: (st: string) => set({ tsStatus: st }),
 
         // which tab is active in the testcases/result drawer
-        activeResultTab: 'test',
-        // Picking a drawer tab (or a run switching to Result) always
-        // re-opens a collapsed drawer so the output is never hidden.
-        setActiveResultTab: (tab) =>
+        activePaneTab: 'desc',
+        // Switching tabs (including a run jumping to Result) always reveals
+        // the problem pane — un-collapsing it on desktop and opening the
+        // overlay on phones — so output is never hidden.
+        setActivePaneTab: (tab) =>
           set((s) => ({
-            activeResultTab: tab,
-            collapsed: { ...s.collapsed, drawer: false },
+            activePaneTab: tab,
+            collapsed: { ...s.collapsed, desc: false },
+            mobileDescOpen: true,
           })),
+        mobileDescOpen: false,
+        setMobileDescOpen: (open) => set({ mobileDescOpen: open }),
         toggleCollapsed: (panel) =>
           set((s) => ({
             collapsed: { ...s.collapsed, [panel]: !s.collapsed[panel] },

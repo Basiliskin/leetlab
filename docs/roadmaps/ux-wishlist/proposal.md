@@ -8,7 +8,10 @@ different levels".
 
 | Item | What landed |
 |---|---|
-| Collapsible | Problem list, description, and test drawer each have a hide button (`«` / `▾`). Hidden panels shrink to a slim rail you click to reopen (a horizontal bar on tablet widths). The state is saved under `collapsed` on `leetlab.v2`. A run that switches to Result reopens the drawer. The editor now grows into the freed space instead of staying a fixed 240px. Code folding already existed (fold gutter). |
+| Collapsible | The problem list and problem pane each have a hide button (`«`). Hidden panels shrink to a slim rail you click to reopen (a horizontal bar on tablet widths). The state is saved under `collapsed` on `leetlab.v2`. The editor grows into the freed space. Code folding already existed (fold gutter). |
+| Tests beside the description | Testcases / Result / Console moved out of the under-editor drawer into the problem pane, as tabs next to Description / Submissions. The editor now takes the full right column. A run jumps to Result and reveals the pane: it un-collapses it on desktop and opens the overlay on phones. |
+| Help dialog | `? Help` in the top bar, or F1, opens a guide covering layout, run & test, shortcuts, autocomplete, the searchable snippet reference with previews, sandbox services, and data. |
+| Shortcuts | The advertised Ctrl/⌘+Enter (run) and Ctrl/⌘+Shift+Enter (submit) were never bound. They work now. |
 | More autocomplete | 28 algorithm snippets in `src/infrastructure/algoSnippets.ts`: loops (`fori`, `forr`, `forij`, `forgrid`), array idioms (`sortnum`, `arr2d`, `prefix`, `freq`, `dirs4`, `adj`), patterns (`twoptr`, `window`, `bsearch`, `bfs`, `dfs`, `memo`, `backtrack`, `stackmono`), data structures (`uf`, `heap`, `listnode`, `treenode`), and debug helpers (`clg`, `clv`, `cltable`). They work in JS and TS, use tab-stop fields, and are suppressed in strings, comments, and after `.`. |
 | Bonus fix | The description pane's **Submissions** tab was never wired up and couldn't be clicked. It now switches views. |
 
@@ -28,7 +31,7 @@ A small AST pass (the TS compiler is already loaded) inserts
 `__trace(line, {locals})` before each statement. The run records a capped
 snapshot timeline (for example 5,000 steps), then the UI replays it with a
 step/scrub slider. The current line is highlighted in CodeMirror and a
-variables panel sits in the drawer. No pausing and no new headers are needed,
+variables panel sits in the problem pane. No pausing and no new headers are needed,
 and it works with the existing 6s timeout.
 
 A cheaper first step is to show `console.log` values inline at the line that
