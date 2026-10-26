@@ -1,6 +1,6 @@
 /**
  * The CodeEditor's autocomplete facet wiring (roadmap phase
- * codeeditor-wire-builtin-completion): the three javascriptLanguage.data
+ * codeeditor-wire-builtin-completion): the javascriptLanguage.data
  * autocomplete entries composed into the editor's extension set, exposed as
  * a pure function of the language mode so CodeEditor.tsx stays component-only
  * and the wiring is unit-testable without a DOM.
@@ -11,6 +11,8 @@
  *   to the underlying scope source, which has its own per-target cache.
  * - sandboxServiceCompletions: the 5 sandbox service handles and their live
  *   prototype members.
+ * - algoSnippetCompletions: interview-pattern snippets (fori, bsearch, bfs,
+ *   memo, heap, …) for both modes.
  * - builtInTsCompletion (TS mode only): the async LanguageService-backed
  *   source for built-in standard-library types.
  *
@@ -29,6 +31,7 @@ import type {
 } from '@codemirror/autocomplete'
 import { sandboxServiceCompletions } from './serviceCompletions'
 import { builtInTsCompletion } from './builtInTsCompletion'
+import { algoSnippetCompletions } from './algoSnippets'
 
 // scopeCompletionSource(globalThis) walks the global object graph on each
 // call to a fresh target. CodeMirror re-queries every autocomplete source on
@@ -79,13 +82,19 @@ function cachedScopeCompletion(
 
 export function editorCompletionSources(lang: 'js' | 'ts'): Extension[] {
   return [
+    // Algorithm-pattern snippets (fori, bsearch, bfs, memo, heap, …),
+    // valid in both modes since the templates carry no type annotations.
+    // Registered first so the scope → service → builtin tail order holds.
+    javascriptLanguage.data.of({
+      autocomplete: algoSnippetCompletions,
+    }),
     javascriptLanguage.data.of({
       autocomplete: cachedScopeCompletion,
     }),
     javascriptLanguage.data.of({
       autocomplete: sandboxServiceCompletions,
     }),
-    // Third entry, TS mode only: the async built-in type-aware source. While
+    // Last entry, TS mode only: the async built-in type-aware source. While
     // the CDN TypeScript compiler/libs are unavailable it returns null and
     // the editor keeps serving the scope + service completions.
     ...(lang === 'ts'

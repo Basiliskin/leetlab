@@ -46,12 +46,23 @@ export interface ProblemState {
   solvedAt: number | null
 }
 
+export interface CollapsedPanels {
+  sidebar: boolean
+  desc: boolean
+}
+
+// Tabs of the left "problem" pane: the description and submission history,
+// plus the test-case editor, run results and console output.
+export type PaneTab = 'desc' | 'subs' | 'test' | 'result' | 'console'
+
 interface AppState {
   lang: 'js' | 'ts'
   split: number
   lastSlug: string
   problems: Record<string, ProblemState>
   generatedProblems: Problem[]
+  // Which layout panels the user has collapsed (desktop/tablet layout).
+  collapsed: CollapsedPanels
 
   // In-memory only — a validated generated problem awaiting review (Phase 5).
   // Deliberately NOT in partialize: it never reaches localStorage, so a
@@ -98,9 +109,14 @@ interface AppState {
   // typescript compiler status
   tsStatus?: string
   setTsStatus: (st: string) => void
-  // which tab is active in the testcases/result drawer
-  activeResultTab: 'test' | 'result' | 'console'
-  setActiveResultTab: (tab: 'test' | 'result' | 'console') => void
+  // which tab is active in the problem pane (description … console)
+  activePaneTab: PaneTab
+  setActivePaneTab: (tab: PaneTab) => void
+  // Phone layout only: whether the problem pane overlays the editor.
+  // In-memory, not persisted; inert on wider layouts.
+  mobileDescOpen: boolean
+  setMobileDescOpen: (open: boolean) => void
+  toggleCollapsed: (panel: keyof CollapsedPanels) => void
 }
 
 const defaultProblemState = (): ProblemState => ({
@@ -212,6 +228,7 @@ export const useAppStore = create<AppState>()(
       lastSlug: PROBLEM_BANK[0].slug,
       problems: {},
       generatedProblems: [],
+      collapsed: { sidebar: false, desc: false },
       pendingGenerated: null,
       currentSlug: PROBLEM_BANK[0].slug,
       selectedCaseIdx: 0,
@@ -382,8 +399,22 @@ export const useAppStore = create<AppState>()(
         setTsStatus: (st: string) => set({ tsStatus: st }),
 
         // which tab is active in the testcases/result drawer
-        activeResultTab: 'test',
-        setActiveResultTab: (tab) => set({ activeResultTab: tab }),
+        activePaneTab: 'desc',
+        // Switching tabs (including a run jumping to Result) always reveals
+        // the problem pane — un-collapsing it on desktop and opening the
+        // overlay on phones — so output is never hidden.
+        setActivePaneTab: (tab) =>
+          set((s) => ({
+            activePaneTab: tab,
+            collapsed: { ...s.collapsed, desc: false },
+            mobileDescOpen: true,
+          })),
+        mobileDescOpen: false,
+        setMobileDescOpen: (open) => set({ mobileDescOpen: open }),
+        toggleCollapsed: (panel) =>
+          set((s) => ({
+            collapsed: { ...s.collapsed, [panel]: !s.collapsed[panel] },
+          })),
     }),
     {
       name: 'leetlab.v2',
@@ -400,6 +431,8 @@ export const useAppStore = create<AppState>()(
         lastSlug: state.lastSlug,
         problems: state.problems,
         generatedProblems: state.generatedProblems,
+        // Additive with a safe default (all expanded) — stays on leetlab.v2.
+        collapsed: state.collapsed,
       }),
     }
   )

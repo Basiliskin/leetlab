@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore, useMergedBank } from "../infrastructure/store";
 import { downloadFullState } from "../infrastructure/fullStateExport";
 import { GenerateModal } from "./GenerateModal";
 import { ImportModal } from "./ImportModal";
 import { ManageProvidersModal } from "./ManageProvidersModal";
+import { HelpModal } from "./HelpModal";
 
 interface TopbarProps {
   navOpen?: boolean;
@@ -14,6 +15,17 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // F1 opens the feature guide from anywhere, including the editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F1") return;
+      e.preventDefault();
+      setHelpOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // Phone-only overflow menu: at phone widths the four action buttons fold
   // behind this toggle (the menu is inert/hidden on desktop).
   const [menuOpen, setMenuOpen] = useState(false);
@@ -113,6 +125,16 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         >
           ⇧ Import
         </button>
+        <button
+          className="gen-btn help-btn"
+          title="Features, shortcuts and snippets (F1)"
+          onClick={() => {
+            setHelpOpen(true);
+            closeMenu();
+          }}
+        >
+          ? Help
+        </button>
       </div>
       {menuOpen && <div className="menu-backdrop" onClick={closeMenu} />}
       <GenerateModal
@@ -124,6 +146,7 @@ export function Topbar({ navOpen = false, onToggleNav }: TopbarProps) {
         onClose={() => setProvidersOpen(false)}
       />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </header>
   );
 }
